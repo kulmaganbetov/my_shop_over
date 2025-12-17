@@ -92,10 +92,27 @@ def download_csv_from_ftp() -> Optional[str]:
         ftp.quit()
 
         buffer.seek(0)
-        content = buffer.read().decode("utf-8-sig")
+        raw_bytes = buffer.read()
+
+        # Try different encodings (cp1251 is common for Russian/Kazakh files)
+        encodings = ["cp1251", "utf-8-sig", "utf-8", "windows-1251", "koi8-r"]
+        content = None
+
+        for encoding in encodings:
+            try:
+                content = raw_bytes.decode(encoding)
+                logger.info(f"  ✓ Decoded with encoding: {encoding}")
+                break
+            except UnicodeDecodeError:
+                logger.debug(f"  Failed to decode with {encoding}, trying next...")
+                continue
+
+        if content is None:
+            logger.error("  ✗ Could not decode file with any known encoding")
+            return None
 
         logger.info(f"  ✓ Downloaded successfully!")
-        logger.info(f"  File size: {len(content):,} bytes")
+        logger.info(f"  File size: {len(content):,} characters")
         logger.info(f"  First 200 chars: {content[:200]}...")
 
         return content
