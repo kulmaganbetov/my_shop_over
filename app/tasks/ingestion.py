@@ -1,4 +1,17 @@
-"""Product ingestion tasks from FTP CSV files."""
+"""Product ingestion tasks from FTP CSV files.
+
+DATA PIPELINE FLOW:
+==================
+1. FTP Connection -> Download CSV file from over-shop.kz FTP server
+2. CSV Parsing -> Convert CSV to pandas DataFrame
+3. Data Normalization -> Clean and transform each row
+4. Database Upsert -> Insert new products or update existing ones
+5. Trigger Embeddings -> Queue embedding generation for new products
+
+This module is triggered by:
+- Celery Beat scheduler (every hour)
+- Manual API call: POST /api/v1/admin/sync/products
+"""
 
 import ftplib
 import io
@@ -14,9 +27,10 @@ from app.core.config import settings
 from app.db.models import Product
 from app.tasks.celery_app import celery_app
 
+# Configure logger for this module
 logger = logging.getLogger(__name__)
 
-# Category to component type mapping
+# Category to component type mapping for PC parts
 COMPONENT_TYPE_MAPPING = {
     "Процессоры": "Процессоры",
     "CPU": "Процессоры",
@@ -41,36 +55,96 @@ COMPONENT_TYPE_MAPPING = {
 
 
 def download_csv_from_ftp() -> Optional[str]:
-    """Download CSV file from FTP server."""
+    """
+    STEP 1: Download CSV file from FTP server.
+
+    Connects to: ftp://over-shop.kz
+    Downloads: Dealer.csv
+    Returns: CSV content as string or None if failed
+    """
+    logger.info("=" * 60)
+    logger.info("STEP 1: DOWNLOADING CSV FROM FTP")
+    logger.info("=" * 60)
+    logger.info(f"  FTP Host: {settings.ftp_host}")
+    logger.info(f"  FTP Port: {settings.ftp_port}")
+    logger.info(f"  FTP User: {settings.ftp_user}")
+    logger.info(f"  CSV File: {settings.ftp_csv_filename}")
+
     try:
+        logger.info("  Connecting to FTP server...")
         ftp = ftplib.FTP()
         ftp.connect(settings.ftp_host, settings.ftp_port)
+        logger.info("  ✓ Connected to FTP server")
+
+        logger.info("  Authenticating...")
         ftp.login(settings.ftp_user, settings.ftp_password)
+        logger.info("  ✓ Authentication successful")
+
+        # List files in directory (for debugging)
+        logger.info("  Listing FTP directory contents...")
+        files = ftp.nlst()
+        logger.info(f"  Found {len(files)} files: {files[:10]}{'...' if len(files) > 10 else ''}")
 
         # Download file to memory
+        logger.info(f"  Downloading {settings.ftp_csv_filename}...")
         buffer = io.BytesIO()
         ftp.retrbinary(f"RETR {settings.ftp_csv_filename}", buffer.write)
         ftp.quit()
 
         buffer.seek(0)
         content = buffer.read().decode("utf-8-sig")
-        logger.info(f"Downloaded {len(content)} bytes from FTP")
+
+        logger.info(f"  ✓ Downloaded successfully!")
+        logger.info(f"  File size: {len(content):,} bytes")
+        logger.info(f"  First 200 chars: {content[:200]}...")
+
         return content
 
+    except ftplib.error_perm as e:
+        logger.error(f"  ✗ FTP permission error: {e}")
+        return None
+    except ftplib.error_temp as e:
+        logger.error(f"  ✗ FTP temporary error: {e}")
+        return None
+    except ConnectionRefusedError:
+        logger.error(f"  ✗ Connection refused - FTP server may be down")
+        return None
     except Exception as e:
-        logger.error(f"FTP download failed: {e}")
+        logger.error(f"  ✗ FTP download failed: {type(e).__name__}: {e}")
         return None
 
 
 def parse_csv(csv_content: str) -> pd.DataFrame:
-    """Parse CSV content into DataFrame."""
+    """
+    STEP 2: Parse CSV content into pandas DataFrame.
+
+    CSV Format (semicolon-separated):
+    - SKU: Product SKU
+    - КодКаспи: Kaspi marketplace code
+    - Номенклатура: Product name
+    - Поставщик: Supplier
+    - Остаток: Stock quantity
+    - Производитель: Manufacturer
+    - КредитРассрочка: Main price
+    - БонуснаяЦена: Discount price
+    - Категория: Category
+    """
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("STEP 2: PARSING CSV")
+    logger.info("=" * 60)
+
     try:
+        logger.info("  Reading CSV with pandas...")
         df = pd.read_csv(
             io.StringIO(csv_content),
             sep=";",
             encoding="utf-8",
             on_bad_lines="skip",
         )
+
+        logger.info(f"  ✓ Read {len(df)} rows")
+        logger.info(f"  Original columns: {list(df.columns)}")
 
         # Rename columns to English
         column_mapping = {
@@ -86,17 +160,43 @@ def parse_csv(csv_content: str) -> pd.DataFrame:
         }
 
         df = df.rename(columns=column_mapping)
-        logger.info(f"Parsed {len(df)} products from CSV")
+        logger.info(f"  Renamed columns: {list(df.columns)}")
+
+        # Show sample data
+        logger.info("")
+        logger.info("  Sample data (first 3 rows):")
+        for i, row in df.head(3).iterrows():
+            logger.info(f"    Row {i}: SKU={row.get('sku')}, Name={str(row.get('name'))[:50]}...")
+
+        # Show statistics
+        logger.info("")
+        logger.info("  Statistics:")
+        logger.info(f"    Total products: {len(df)}")
+        logger.info(f"    Unique categories: {df['category'].nunique() if 'category' in df.columns else 'N/A'}")
+        logger.info(f"    Products with price: {df['price'].notna().sum() if 'price' in df.columns else 'N/A'}")
+
         return df
 
+    except pd.errors.EmptyDataError:
+        logger.error("  ✗ CSV file is empty")
+        return pd.DataFrame()
+    except pd.errors.ParserError as e:
+        logger.error(f"  ✗ CSV parsing error: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        logger.error(f"CSV parsing failed: {e}")
+        logger.error(f"  ✗ CSV parsing failed: {type(e).__name__}: {e}")
         return pd.DataFrame()
 
 
 def normalize_product(row: pd.Series) -> dict:
-    """Normalize a product row into database format."""
-    # Clean and convert values
+    """
+    STEP 3: Normalize a single product row.
+
+    - Cleans string values
+    - Converts numeric values
+    - Extracts specifications from product name
+    - Maps category to component type
+    """
     def clean_number(val, default=0):
         if pd.isna(val):
             return default
@@ -130,17 +230,17 @@ def normalize_product(row: pd.Series) -> dict:
             product["component_type"] = component_type
             break
 
-    # Extract specifications from name (basic extraction)
-    product["specifications"] = extract_specifications(product["name"], product.get("category", ""))
+    # Extract specifications from name
+    product["specifications"] = extract_specifications(
+        product["name"],
+        product.get("category", "")
+    )
 
     return product
 
 
 def extract_specifications(name: str, category: str) -> dict:
-    """Extract technical specifications from product name.
-
-    This is a basic extraction - in production, you'd want more sophisticated parsing.
-    """
+    """Extract technical specifications from product name using regex."""
     specs = {}
     name_lower = name.lower()
 
@@ -191,33 +291,63 @@ def extract_specifications(name: str, category: str) -> dict:
 
 @celery_app.task(bind=True, max_retries=3)
 def sync_products_from_ftp(self):
-    """Sync products from FTP CSV file."""
-    logger.info("Starting product sync from FTP")
+    """
+    MAIN TASK: Sync products from FTP to PostgreSQL.
 
-    # Download CSV
+    This is the main entry point for product synchronization.
+    Called by:
+    - Celery Beat scheduler (hourly)
+    - POST /api/v1/admin/sync/products
+
+    Flow:
+    1. Download CSV from FTP
+    2. Parse CSV to DataFrame
+    3. For each product:
+       - Normalize data
+       - Insert or update in PostgreSQL
+    4. Return statistics
+    """
+    logger.info("")
+    logger.info("*" * 60)
+    logger.info("*  PRODUCT SYNC TASK STARTED")
+    logger.info("*" * 60)
+    logger.info("")
+
+    # STEP 1: Download CSV
     csv_content = download_csv_from_ftp()
     if not csv_content:
+        logger.error("Failed to download CSV, will retry in 60 seconds")
         self.retry(countdown=60)
         return {"status": "error", "message": "Failed to download CSV"}
 
-    # Parse CSV
+    # STEP 2: Parse CSV
     df = parse_csv(csv_content)
     if df.empty:
+        logger.error("CSV is empty or invalid")
         return {"status": "error", "message": "Empty or invalid CSV"}
 
-    # Create sync database session
+    # STEP 3 & 4: Normalize and save to database
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("STEP 3 & 4: SAVING TO POSTGRESQL")
+    logger.info("=" * 60)
+    logger.info(f"  Database URL: {settings.database_url_sync[:50]}...")
+
     engine = create_engine(settings.database_url_sync)
 
     created = 0
     updated = 0
     errors = 0
 
+    logger.info(f"  Processing {len(df)} products...")
+
     with Session(engine) as session:
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             try:
                 product_data = normalize_product(row)
 
                 if not product_data["sku"]:
+                    logger.warning(f"    Skipping row {idx}: no SKU")
                     continue
 
                 # Check if product exists
@@ -231,18 +361,29 @@ def sync_products_from_ftp(self):
                         if hasattr(existing, key):
                             setattr(existing, key, value)
                     updated += 1
+                    if updated <= 3:
+                        logger.info(f"    Updated: SKU={product_data['sku']}, Name={product_data['name'][:30]}...")
                 else:
                     # Create new product
                     product = Product(**product_data)
                     session.add(product)
                     created += 1
+                    if created <= 3:
+                        logger.info(f"    Created: SKU={product_data['sku']}, Name={product_data['name'][:30]}...")
+
+                # Progress log every 100 items
+                if (idx + 1) % 100 == 0:
+                    logger.info(f"    Progress: {idx + 1}/{len(df)} processed...")
 
             except Exception as e:
-                logger.error(f"Error processing product: {e}")
+                logger.error(f"    Error processing row {idx}: {type(e).__name__}: {e}")
                 errors += 1
 
+        logger.info("  Committing transaction...")
         session.commit()
+        logger.info("  ✓ Transaction committed")
 
+    # Summary
     result = {
         "status": "success",
         "created": created,
@@ -250,19 +391,34 @@ def sync_products_from_ftp(self):
         "errors": errors,
         "total": len(df),
     }
-    logger.info(f"Product sync completed: {result}")
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("SYNC COMPLETED")
+    logger.info("=" * 60)
+    logger.info(f"  ✓ Created: {created} new products")
+    logger.info(f"  ✓ Updated: {updated} existing products")
+    logger.info(f"  ✗ Errors: {errors}")
+    logger.info(f"  Total processed: {len(df)}")
+    logger.info("")
+    logger.info("*" * 60)
+    logger.info("*  PRODUCT SYNC TASK FINISHED")
+    logger.info("*" * 60)
+
     return result
 
 
 @celery_app.task
 def import_products_from_csv(csv_path: str):
-    """Import products from a local CSV file."""
-    logger.info(f"Importing products from {csv_path}")
+    """Import products from a local CSV file (for testing)."""
+    logger.info(f"Importing products from local file: {csv_path}")
 
     try:
         with open(csv_path, "r", encoding="utf-8-sig") as f:
             csv_content = f.read()
+        logger.info(f"  Read {len(csv_content)} bytes from {csv_path}")
     except FileNotFoundError:
+        logger.error(f"  File not found: {csv_path}")
         return {"status": "error", "message": f"File not found: {csv_path}"}
 
     df = parse_csv(csv_content)
@@ -270,7 +426,6 @@ def import_products_from_csv(csv_path: str):
         return {"status": "error", "message": "Empty or invalid CSV"}
 
     engine = create_engine(settings.database_url_sync)
-
     created = 0
     updated = 0
 
@@ -297,4 +452,5 @@ def import_products_from_csv(csv_path: str):
 
         session.commit()
 
+    logger.info(f"Import completed: created={created}, updated={updated}")
     return {"status": "success", "created": created, "updated": updated}
