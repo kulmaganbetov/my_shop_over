@@ -68,6 +68,8 @@ This is a **modular monolith** with clear separation of concerns:
 
 ## Quick Start
 
+> **macOS Users**: See the detailed setup guide at [docs/LOCAL_SETUP_MAC.md](docs/LOCAL_SETUP_MAC.md)
+
 ### Using Docker Compose
 
 ```bash
