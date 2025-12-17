@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS faq_documents (
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     category VARCHAR(100),
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     embedding vector(1536),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role VARCHAR(20) NOT NULL,
     content TEXT NOT NULL,
     intent VARCHAR(50),
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

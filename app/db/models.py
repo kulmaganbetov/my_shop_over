@@ -90,7 +90,7 @@ class FAQDocument(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
     embedding: Mapped[Optional[list]] = mapped_column(Vector(settings.embedding_dimension))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -146,7 +146,7 @@ class ChatMessage(Base):
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
     intent: Mapped[Optional[str]] = mapped_column(String(50))
-    metadata: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

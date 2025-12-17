@@ -51,7 +51,7 @@ class ChatRepository(BaseRepository[ChatSession]):
         role: str,
         content: str,
         intent: Optional[str] = None,
-        metadata: Optional[dict] = None,
+        extra_data: Optional[dict] = None,
     ) -> ChatMessage:
         """Add a message to the session."""
         message = ChatMessage(
@@ -59,7 +59,7 @@ class ChatRepository(BaseRepository[ChatSession]):
             role=role,
             content=content,
             intent=intent,
-            metadata=metadata or {},
+            extra_data=extra_data or {},
         )
         self.session.add(message)
         await self.session.commit()

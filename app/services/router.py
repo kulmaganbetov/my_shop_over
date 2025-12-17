@@ -63,7 +63,7 @@ class IntentRouter:
             role="assistant",
             content=response.message,
             intent=response.intent.value,
-            metadata={"data": response.data} if response.data else None,
+            extra_data={"data": response.data} if response.data else None,
         )
 
         return response
