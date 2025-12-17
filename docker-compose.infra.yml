@@ -1,0 +1,86 @@
+version: '3.8'
+
+# Infrastructure-only Docker Compose for local development
+# Run FastAPI locally, everything else in Docker
+
+services:
+  # PostgreSQL with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: overshop-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: overshop
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: overshop-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker
+  celery-worker:
+    image: python:3.11-slim
+    container_name: overshop-celery-worker
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/overshop
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/overshop
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -c "apt-get update && apt-get install -y gcc libpq-dev &&
+               pip install --no-cache-dir -r requirements.txt &&
+               celery -A app.tasks.celery_app worker --loglevel=info"
+
+  # Celery Beat (Scheduler) - Optional, for periodic tasks
+  celery-beat:
+    image: python:3.11-slim
+    container_name: overshop-celery-beat
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/overshop
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/overshop
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -c "apt-get update && apt-get install -y gcc libpq-dev &&
+               pip install --no-cache-dir -r requirements.txt &&
+               celery -A app.tasks.celery_app beat --loglevel=info"
+
+volumes:
+  postgres_data:
+  redis_data:

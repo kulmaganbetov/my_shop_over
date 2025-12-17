@@ -1,84 +1,49 @@
-# Local Development Setup on macOS
+# Local Development Setup on macOS (Hybrid Docker)
 
-This guide will help you set up the OverShop AI Assistant backend on your Mac for local development.
+This guide shows how to run **PostgreSQL, Redis, and Celery in Docker**, while running the **FastAPI app locally** on your Mac.
 
 ## Prerequisites
 
-### 1. Install Homebrew (if not installed)
+### 1. Install Docker Desktop
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
+Download and install Docker Desktop for Mac:
+- https://www.docker.com/products/docker-desktop/
+
+After installation, make sure Docker is running (whale icon in menu bar).
 
 ### 2. Install Python 3.11+
 
 ```bash
+# Using Homebrew
 brew install python@3.11
+
+# Or download from python.org
+# https://www.python.org/downloads/
 ```
 
 Verify installation:
 ```bash
-python3.11 --version
-```
-
-### 3. Install PostgreSQL with pgvector
-
-```bash
-# Install PostgreSQL 16
-brew install postgresql@16
-
-# Start PostgreSQL service
-brew services start postgresql@16
-
-# Install pgvector extension
-brew install pgvector
-```
-
-### 4. Install Redis
-
-```bash
-brew install redis
-
-# Start Redis service
-brew services start redis
-```
-
-### 5. Verify Services are Running
-
-```bash
-# Check PostgreSQL
-brew services list | grep postgresql
-
-# Check Redis
-brew services list | grep redis
-
-# Test Redis connection
-redis-cli ping
-# Should return: PONG
+python3 --version
 ```
 
 ---
 
 ## Project Setup
 
-### 1. Clone the Repository
+### 1. Clone/Navigate to the Repository
 
 ```bash
-cd ~/projects  # or your preferred directory
-git clone <repository-url> my_shop_over
-cd my_shop_over
+cd ~/projects/my_shop_over  # or wherever your project is
 ```
 
 ### 2. Create Virtual Environment
 
 ```bash
-python3.11 -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 ```
 
-You should see `(venv)` in your terminal prompt.
-
-### 3. Install Dependencies
+### 3. Install Python Dependencies
 
 ```bash
 pip install --upgrade pip
@@ -88,30 +53,30 @@ pip install -r requirements.txt
 ### 4. Configure Environment Variables
 
 ```bash
-# Copy example environment file
 cp .env.example .env
-
-# Edit the .env file
-nano .env  # or use your preferred editor (vim, code, etc.)
 ```
 
-Update these values in `.env`:
+Edit `.env` file:
+```bash
+nano .env  # or: open -e .env (TextEdit) or: code .env (VS Code)
+```
 
+Update with these values:
 ```env
-# Database - use your local PostgreSQL
+# Database - connects to Docker container
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/overshop
 DATABASE_URL_SYNC=postgresql://postgres:postgres@localhost:5432/overshop
 
-# Redis
+# Redis - connects to Docker container
 REDIS_URL=redis://localhost:6379/0
 
 # IMPORTANT: Add your OpenAI API key
 OPENAI_API_KEY=sk-your-openai-api-key-here
 
-# LLM Provider (openai or anthropic)
+# LLM Provider
 LLM_PROVIDER=openai
 
-# FTP Configuration (already set)
+# FTP Configuration
 FTP_HOST=over-shop.kz
 FTP_PORT=21
 FTP_USER=zoomos1
@@ -126,46 +91,133 @@ LOG_LEVEL=INFO
 
 ---
 
-## Database Setup
+## Step 1: Start Infrastructure in Docker
 
-### 1. Create Database and User
+### Create a Docker Compose file for infrastructure only
 
-```bash
-# Connect to PostgreSQL
-psql postgres
-
-# In PostgreSQL shell, run:
-CREATE USER postgres WITH PASSWORD 'postgres' SUPERUSER;
-CREATE DATABASE overshop OWNER postgres;
-\c overshop
-CREATE EXTENSION IF NOT EXISTS vector;
-\q
-```
-
-Or as a single command:
-```bash
-createdb overshop
-psql overshop -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-### 2. Initialize Database Schema
+Create a new file `docker-compose.infra.yml`:
 
 ```bash
-# Make sure you're in the project directory with venv activated
-cd ~/projects/my_shop_over
-source venv/bin/activate
+cat > docker-compose.infra.yml << 'EOF'
+version: '3.8'
 
-# Run the initialization script
-psql overshop < scripts/init-db.sql
+services:
+  # PostgreSQL with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: overshop-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: overshop
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: overshop-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker
+  celery-worker:
+    image: python:3.11-slim
+    container_name: overshop-celery-worker
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/overshop
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/overshop
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -c "pip install -r requirements.txt &&
+               celery -A app.tasks.celery_app worker --loglevel=info"
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    image: python:3.11-slim
+    container_name: overshop-celery-beat
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/overshop
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/overshop
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -c "pip install -r requirements.txt &&
+               celery -A app.tasks.celery_app beat --loglevel=info"
+
+volumes:
+  postgres_data:
+  redis_data:
+EOF
 ```
 
-### 3. Verify Database Setup
+### Start the Docker containers
 
 ```bash
-psql overshop -c "\dt"
+# Start PostgreSQL, Redis, and Celery
+docker-compose -f docker-compose.infra.yml up -d
+
+# Check status
+docker-compose -f docker-compose.infra.yml ps
+
+# View logs
+docker-compose -f docker-compose.infra.yml logs -f
 ```
 
-You should see tables like:
+### Wait for services to be ready
+
+```bash
+# Check PostgreSQL
+docker exec overshop-db pg_isready -U postgres
+
+# Check Redis
+docker exec overshop-redis redis-cli ping
+```
+
+---
+
+## Step 2: Verify Database Setup
+
+The database should be automatically initialized. Verify:
+
+```bash
+# Connect to PostgreSQL in Docker
+docker exec -it overshop-db psql -U postgres -d overshop -c "\dt"
+```
+
+You should see tables:
 - products
 - product_embeddings
 - faq_documents
@@ -173,101 +225,64 @@ You should see tables like:
 - chat_sessions
 - chat_messages
 
+If tables are missing, run:
+```bash
+docker exec -i overshop-db psql -U postgres -d overshop < scripts/init-db.sql
+```
+
 ---
 
-## Running the Application
+## Step 3: Run FastAPI Locally
 
-### Option A: Run Everything Separately (Recommended for Development)
-
-Open **3 terminal windows/tabs**:
-
-#### Terminal 1: FastAPI Server
+Open a new terminal:
 
 ```bash
 cd ~/projects/my_shop_over
 source venv/bin/activate
+
+# Start the FastAPI server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-#### Terminal 2: Celery Worker
-
-```bash
-cd ~/projects/my_shop_over
-source venv/bin/activate
-celery -A app.tasks.celery_app worker --loglevel=info
-```
-
-#### Terminal 3: Celery Beat (Scheduler) - Optional
-
-```bash
-cd ~/projects/my_shop_over
-source venv/bin/activate
-celery -A app.tasks.celery_app beat --loglevel=info
-```
-
-### Option B: Use Docker Compose (Easier)
-
-If you prefer Docker:
-
-```bash
-# Install Docker Desktop for Mac from https://www.docker.com/products/docker-desktop
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f api
-```
-
 ---
 
-## Verify Installation
+## Verify Everything is Working
 
 ### 1. Check API Health
 
 ```bash
 curl http://localhost:8000/api/v1/health
 ```
-
-Expected response:
-```json
-{"status": "healthy", "service": "overshop-assistant"}
-```
+Expected: `{"status": "healthy", "service": "overshop-assistant"}`
 
 ### 2. Check Database Connection
 
 ```bash
 curl http://localhost:8000/api/v1/health/db
 ```
-
-Expected response:
-```json
-{"status": "healthy", "database": "connected"}
-```
+Expected: `{"status": "healthy", "database": "connected"}`
 
 ### 3. Access API Documentation
 
-Open in your browser:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+Open in browser: http://localhost:8000/docs
 
 ---
 
 ## Initial Data Setup
 
-### 1. Seed FAQ Content
+### Seed FAQ Content
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/admin/faq/seed
 ```
 
-### 2. Sync Products from FTP
+### Sync Products from FTP
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/admin/sync/products
 ```
 
-### 3. Generate Embeddings
+### Generate Embeddings
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/admin/sync/embeddings?batch_size=50"
@@ -275,200 +290,177 @@ curl -X POST "http://localhost:8000/api/v1/admin/sync/embeddings?batch_size=50"
 
 ---
 
-## Testing the Chat API
+## Test the Chat API
 
-### Example 1: PC Build Request
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Хочу собрать игровой ПК за 500000 тенге для игр в 1440p"
-  }'
-```
-
-### Example 2: Product Search
+### PC Build Request
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": "Покажи видеокарты RTX 4070"
-  }'
+  -d '{"message": "Хочу собрать игровой ПК за 500000 тенге"}'
 ```
 
-### Example 3: FAQ Question
+### Product Search
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": "Как оформить доставку?"
-  }'
+  -d '{"message": "Покажи видеокарты RTX 4070"}'
 ```
 
-### Example 4: Direct Product Search
+### FAQ Question
 
 ```bash
-curl "http://localhost:8000/api/v1/products/search?query=RTX%204070&limit=5"
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Как оформить доставку?"}'
 ```
 
 ---
 
-## Running Tests
+## Daily Workflow
+
+### Starting Development
 
 ```bash
-# Make sure venv is activated
+# 1. Start Docker containers
+cd ~/projects/my_shop_over
+docker-compose -f docker-compose.infra.yml up -d
+
+# 2. Wait a few seconds for services to start
+
+# 3. Start FastAPI locally
 source venv/bin/activate
+uvicorn app.main:app --reload
+```
 
-# Run all tests
-pytest
+### Stopping Development
 
-# Run with coverage
-pytest --cov=app
+```bash
+# Stop FastAPI: Ctrl+C in terminal
 
-# Run specific test file
-pytest tests/test_compatibility.py -v
+# Stop Docker containers
+docker-compose -f docker-compose.infra.yml down
+
+# Or keep data and just stop:
+docker-compose -f docker-compose.infra.yml stop
 ```
 
 ---
 
-## Development Workflow
+## Viewing Logs
 
-### Making Code Changes
-
-The FastAPI server runs with `--reload`, so it will automatically restart when you save changes.
-
-### Database Migrations
-
-If you need to create new migrations:
+### Docker Container Logs
 
 ```bash
-# Create a migration
-alembic revision --autogenerate -m "description of changes"
+# All containers
+docker-compose -f docker-compose.infra.yml logs -f
 
-# Apply migrations
-alembic upgrade head
+# Specific container
+docker-compose -f docker-compose.infra.yml logs -f db
+docker-compose -f docker-compose.infra.yml logs -f redis
+docker-compose -f docker-compose.infra.yml logs -f celery-worker
 ```
 
-### Viewing Logs
+### Connect to PostgreSQL
 
 ```bash
-# API logs - visible in Terminal 1
-# Celery worker logs - visible in Terminal 2
+docker exec -it overshop-db psql -U postgres -d overshop
+```
 
-# To see Redis activity
-redis-cli MONITOR
+### Connect to Redis
 
-# To see PostgreSQL queries (enable in postgresql.conf)
-tail -f /usr/local/var/log/postgresql@16.log
+```bash
+docker exec -it overshop-redis redis-cli
 ```
 
 ---
 
 ## Troubleshooting
 
-### PostgreSQL Connection Issues
+### Docker containers won't start
 
 ```bash
-# Check if PostgreSQL is running
-brew services list | grep postgresql
+# Check Docker Desktop is running
+docker info
 
-# Restart PostgreSQL
-brew services restart postgresql@16
+# Remove old containers and start fresh
+docker-compose -f docker-compose.infra.yml down -v
+docker-compose -f docker-compose.infra.yml up -d
+```
+
+### Database connection refused
+
+```bash
+# Check if PostgreSQL container is running
+docker ps | grep overshop-db
 
 # Check PostgreSQL logs
-tail -f /usr/local/var/log/postgresql@16.log
+docker logs overshop-db
+
+# Restart the container
+docker-compose -f docker-compose.infra.yml restart db
 ```
 
-### Redis Connection Issues
+### Redis connection refused
 
 ```bash
-# Check if Redis is running
-brew services list | grep redis
+# Check if Redis container is running
+docker ps | grep overshop-redis
 
-# Restart Redis
-brew services restart redis
-
-# Test connection
-redis-cli ping
+# Test Redis
+docker exec overshop-redis redis-cli ping
 ```
 
-### pgvector Extension Not Found
+### Celery worker not processing tasks
 
 ```bash
-# Make sure pgvector is installed
-brew install pgvector
+# Check Celery worker logs
+docker logs overshop-celery-worker -f
 
-# Then create the extension in your database
-psql overshop -c "CREATE EXTENSION vector;"
+# Restart Celery worker
+docker-compose -f docker-compose.infra.yml restart celery-worker
 ```
 
-### OpenAI API Key Issues
-
-If you see authentication errors:
-1. Verify your API key is correct in `.env`
-2. Check you have credits in your OpenAI account
-3. Restart the FastAPI server after changing `.env`
-
-### Port Already in Use
+### Port already in use
 
 ```bash
-# Find what's using port 8000
-lsof -i :8000
+# Find what's using the port
+lsof -i :5432  # PostgreSQL
+lsof -i :6379  # Redis
+lsof -i :8000  # FastAPI
 
-# Kill the process
-kill -9 <PID>
+# Kill the process or change ports in docker-compose.infra.yml
 ```
 
----
-
-## Stopping Services
-
-### If Running Manually
-
-- Press `Ctrl+C` in each terminal window
-
-### If Using Docker
+### Reset everything
 
 ```bash
-docker-compose down
-```
+# Stop and remove all containers and volumes
+docker-compose -f docker-compose.infra.yml down -v
 
-### Stop Background Services
-
-```bash
-brew services stop postgresql@16
-brew services stop redis
+# Start fresh
+docker-compose -f docker-compose.infra.yml up -d
 ```
 
 ---
 
-## Quick Reference Commands
+## Quick Reference
 
 ```bash
-# Start everything
-brew services start postgresql@16
-brew services start redis
-source venv/bin/activate
-uvicorn app.main:app --reload  # Terminal 1
-celery -A app.tasks.celery_app worker --loglevel=info  # Terminal 2
+# Start infrastructure
+docker-compose -f docker-compose.infra.yml up -d
+
+# Start FastAPI
+source venv/bin/activate && uvicorn app.main:app --reload
 
 # Stop everything
-Ctrl+C (in each terminal)
-brew services stop postgresql@16
-brew services stop redis
+docker-compose -f docker-compose.infra.yml down
+
+# View all logs
+docker-compose -f docker-compose.infra.yml logs -f
 
 # Check status
-brew services list
+docker-compose -f docker-compose.infra.yml ps
 curl http://localhost:8000/api/v1/health
 ```
-
----
-
-## Next Steps
-
-1. **Customize PC Presets**: Edit `scripts/init-db.sql` to add real product SKUs
-2. **Add More FAQ Content**: Use the admin API to add FAQ documents
-3. **Configure Webhooks**: Set up notifications for new orders
-4. **Deploy**: See `docker-compose.yml` for production deployment
