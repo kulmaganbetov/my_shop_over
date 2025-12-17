@@ -1,0 +1,292 @@
+"""PC Build service with deterministic compatibility rules."""
+
+import logging
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.repositories import PresetRepository, ProductRepository
+from app.llm.service import LLMService
+from app.schemas.chat import PCBuildResult
+from app.schemas.common import ProductSchema
+from app.schemas.llm import PCBuildParams, PCPurpose
+from app.services.compatibility import (
+    BUDGET_ALLOCATION,
+    CompatibilityEngine,
+    CompatibilityStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# Component types mapping
+COMPONENT_TYPES = {
+    "cpu": "Процессоры",
+    "gpu": "Видеокарты",
+    "motherboard": "Материнские платы",
+    "ram": "Оперативная память",
+    "storage": "SSD накопители",
+    "psu": "Блоки питания",
+    "case": "Корпуса",
+    "cooler": "Кулеры",
+}
+
+
+class PCBuildService:
+    """Service for recommending PC builds.
+
+    Uses DETERMINISTIC rules for compatibility.
+    LLM is only used for generating explanations.
+    """
+
+    def __init__(self, session: AsyncSession, llm_service: LLMService):
+        self.session = session
+        self.llm_service = llm_service
+        self.product_repo = ProductRepository(session)
+        self.preset_repo = PresetRepository(session)
+        self.compatibility_engine = CompatibilityEngine()
+
+    async def recommend_build(self, params: PCBuildParams) -> PCBuildResult:
+        """Recommend a PC build based on parameters."""
+        budget = params.budget or 0
+        if params.budget_min and params.budget_max:
+            budget = (params.budget_min + params.budget_max) // 2
+        elif params.budget_min:
+            budget = params.budget_min
+        elif params.budget_max:
+            budget = params.budget_max
+
+        purpose = params.purpose.value if isinstance(params.purpose, PCPurpose) else params.purpose
+
+        # Check for matching presets first
+        presets = await self.preset_repo.get_by_budget(budget, purpose)
+        if presets:
+            return await self._build_from_preset(presets[0], budget)
+
+        # Build from scratch
+        return await self._build_from_scratch(budget, purpose, params)
+
+    async def _build_from_preset(
+        self,
+        preset,
+        budget: int,
+    ) -> PCBuildResult:
+        """Build from a predefined preset."""
+        build = {}
+        total_price = 0
+        warnings = []
+
+        component_skus = preset.components
+
+        for component_type, sku in component_skus.items():
+            product = await self.product_repo.get_by_sku(sku)
+            if product and product.stock > 0:
+                build[component_type] = ProductSchema.model_validate(product)
+                price = product.discount_price or product.price or 0
+                total_price += price
+            else:
+                build[component_type] = None
+                warnings.append(f"{component_type}: рекомендуемый товар недоступен")
+
+        # Check compatibility
+        compatibility_notes = []
+        build_specs = self._extract_build_specs(build)
+        compatibility_results = self.compatibility_engine.check_all_compatibility(build_specs)
+        overall_status = self.compatibility_engine.get_overall_status(compatibility_results)
+
+        for result in compatibility_results:
+            if result.status != CompatibilityStatus.OK:
+                compatibility_notes.append(result.message)
+
+        return PCBuildResult(
+            build=build,
+            total_price=total_price,
+            compatibility=overall_status.value,
+            compatibility_notes=compatibility_notes,
+            warnings=warnings,
+        )
+
+    async def _build_from_scratch(
+        self,
+        budget: int,
+        purpose: str,
+        params: PCBuildParams,
+    ) -> PCBuildResult:
+        """Build a PC from scratch based on budget and purpose."""
+        # Allocate budget
+        budget_allocation = self.compatibility_engine.allocate_budget(budget, purpose)
+
+        build = {}
+        total_price = 0
+        warnings = []
+        compatibility_notes = []
+
+        # Select components in order of importance
+        component_order = ["cpu", "gpu", "motherboard", "ram", "storage", "psu", "case"]
+
+        for component in component_order:
+            component_budget = budget_allocation.get(component, 0)
+            component_type = COMPONENT_TYPES.get(component)
+
+            if not component_type:
+                continue
+
+            # Get products for this component type within budget
+            products = await self.product_repo.get_by_component_type(
+                component_type=component_type,
+                max_price=component_budget * 1.2,
+                in_stock_only=True,
+                limit=10,
+            )
+
+            if products:
+                # Select best product within budget
+                selected = self._select_best_component(
+                    products,
+                    component_budget,
+                    purpose,
+                    build,
+                )
+                if selected:
+                    build[component] = ProductSchema.model_validate(selected)
+                    price = selected.discount_price or selected.price or 0
+                    total_price += price
+                else:
+                    build[component] = None
+                    warnings.append(f"{component}: не найден подходящий товар в бюджете")
+            else:
+                build[component] = None
+                warnings.append(f"{component}: товары не найдены")
+
+        # Validate compatibility
+        build_specs = self._extract_build_specs(build)
+        compatibility_results = self.compatibility_engine.check_all_compatibility(build_specs)
+        overall_status = self.compatibility_engine.get_overall_status(compatibility_results)
+
+        for result in compatibility_results:
+            if result.status != CompatibilityStatus.OK:
+                compatibility_notes.append(result.message)
+
+        return PCBuildResult(
+            build=build,
+            total_price=total_price,
+            compatibility=overall_status.value,
+            compatibility_notes=compatibility_notes,
+            warnings=warnings,
+        )
+
+    def _select_best_component(
+        self,
+        products: list,
+        budget: int,
+        purpose: str,
+        current_build: dict,
+    ) -> Optional[any]:
+        """Select the best component within budget.
+
+        This uses DETERMINISTIC rules based on:
+        1. Price within budget
+        2. Stock availability
+        3. Compatibility with current build
+        """
+        # Filter products within budget
+        candidates = []
+        for product in products:
+            price = product.discount_price or product.price or 0
+            if price <= budget * 1.1 and product.stock > 0:
+                candidates.append((product, price))
+
+        if not candidates:
+            # If nothing in budget, return cheapest available
+            if products:
+                return min(products, key=lambda p: p.discount_price or p.price or float('inf'))
+            return None
+
+        # Sort by price descending (get best within budget)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+
+        # Return the most expensive within budget (best value)
+        return candidates[0][0]
+
+    def _extract_build_specs(self, build: dict) -> dict:
+        """Extract specifications for compatibility checking."""
+        specs = {}
+
+        # Extract specs from products
+        for component_type, product in build.items():
+            if product is None:
+                continue
+
+            product_specs = product.specifications or {}
+
+            if component_type == "cpu":
+                specs["cpu_socket"] = product_specs.get("socket")
+                specs["cpu_tdp"] = product_specs.get("tdp", 65)
+
+            elif component_type == "motherboard":
+                specs["motherboard_socket"] = product_specs.get("socket")
+                specs["motherboard_ram_type"] = product_specs.get("ram_type")
+
+            elif component_type == "ram":
+                specs["ram_type"] = product_specs.get("type")
+
+            elif component_type == "gpu":
+                specs["gpu_model"] = product.name
+                specs["gpu_length"] = product_specs.get("length", 300)
+                specs["gpu_tdp"] = product_specs.get("tdp", 200)
+
+            elif component_type == "psu":
+                specs["psu_wattage"] = product_specs.get("wattage", 500)
+
+            elif component_type == "case":
+                specs["case_max_gpu_length"] = product_specs.get("max_gpu_length", 350)
+                specs["case_max_cooler_height"] = product_specs.get("max_cooler_height", 160)
+
+            elif component_type == "cooler":
+                specs["cooler_height"] = product_specs.get("height", 150)
+
+        # Calculate total TDP
+        total_tdp = specs.get("cpu_tdp", 0) + specs.get("gpu_tdp", 0) + 100  # +100 for other components
+        specs["total_tdp"] = total_tdp
+
+        return specs
+
+    async def get_component_alternatives(
+        self,
+        component_type: str,
+        current_build: dict,
+        budget: Optional[int] = None,
+        limit: int = 5,
+    ) -> list[ProductSchema]:
+        """Get alternative components compatible with current build."""
+        db_component_type = COMPONENT_TYPES.get(component_type)
+        if not db_component_type:
+            return []
+
+        products = await self.product_repo.get_by_component_type(
+            component_type=db_component_type,
+            max_price=budget,
+            in_stock_only=True,
+            limit=limit * 2,
+        )
+
+        # Filter for compatibility
+        compatible = []
+        build_specs = self._extract_build_specs(current_build)
+
+        for product in products:
+            # Check compatibility with current build
+            test_build = current_build.copy()
+            test_build[component_type] = ProductSchema.model_validate(product)
+            test_specs = self._extract_build_specs(test_build)
+
+            results = self.compatibility_engine.check_all_compatibility(test_specs)
+            status = self.compatibility_engine.get_overall_status(results)
+
+            if status != CompatibilityStatus.ERROR:
+                compatible.append(product)
+
+            if len(compatible) >= limit:
+                break
+
+        return [ProductSchema.model_validate(p) for p in compatible]
