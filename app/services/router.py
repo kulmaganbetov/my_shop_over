@@ -39,6 +39,9 @@ class IntentRouter:
         session_id: str,
     ) -> ChatResponse:
         """Process a user message and return a response."""
+        # Ensure session exists first (creates if needed)
+        await self.chat_repo.get_or_create_session(session_id)
+
         # Store user message
         await self.chat_repo.add_message(
             session_id=session_id,
