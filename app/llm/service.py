@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from app.llm.client import BaseLLMClient, get_llm_client
 from app.llm.prompts import (
+    COMPONENT_REPLACE_SYSTEM_PROMPT,
+    COMPONENT_REPLACE_USER_PROMPT,
     FAQ_RESPONSE_SYSTEM_PROMPT,
     FAQ_RESPONSE_USER_PROMPT,
     GENERAL_RESPONSE_SYSTEM_PROMPT,
@@ -18,6 +20,7 @@ from app.llm.prompts import (
     EMBEDDING_TEXT_TEMPLATE,
 )
 from app.schemas.llm import (
+    ComponentReplaceParams,
     FAQParams,
     Intent,
     IntentDetectionResult,
@@ -96,6 +99,37 @@ class LLMService:
         return FAQParams(
             question=params.get("question", ""),
             topic=params.get("topic"),
+        )
+
+    def parse_component_replace_params(self, params: dict) -> ComponentReplaceParams:
+        """Parse component replacement parameters from intent detection."""
+        return ComponentReplaceParams(
+            component_type=params.get("component_type", ""),
+            budget=params.get("budget"),
+            preference=params.get("preference"),
+        )
+
+    async def generate_component_replace_response(
+        self,
+        component_type: str,
+        preference: str,
+        alternatives: list[dict],
+        current_build: dict,
+        chat_history: str = "",
+    ) -> str:
+        """Generate a response for component replacement."""
+        import json
+        user_prompt = COMPONENT_REPLACE_USER_PROMPT.format(
+            component_type=component_type,
+            preference=preference or "любой",
+            alternatives=json.dumps(alternatives, ensure_ascii=False, indent=2),
+            current_build=json.dumps(current_build, ensure_ascii=False, indent=2),
+            chat_history=chat_history,
+        )
+        return await self.client.complete(
+            system_prompt=COMPONENT_REPLACE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.7,
         )
 
     async def generate_pc_build_response(

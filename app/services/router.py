@@ -104,6 +104,8 @@ class IntentRouter:
         try:
             if intent == Intent.PC_BUILD:
                 return await self._handle_pc_build(params, user_message, session_id, chat_history)
+            elif intent == Intent.COMPONENT_REPLACE:
+                return await self._handle_component_replace(params, user_message, session_id, chat_history)
             elif intent == Intent.PRODUCT_SEARCH:
                 return await self._handle_product_search(params, user_message, session_id, chat_history)
             elif intent == Intent.FAQ:
@@ -127,24 +129,94 @@ class IntentRouter:
         # Get build recommendation
         build_result = await self.pc_build_service.recommend_build(build_params)
 
+        # Store build in session context for later replacement
+        build_data = build_result.model_dump()
+        await self.chat_repo.update_session_context(
+            session_id,
+            {"current_build": build_data}
+        )
+
         # Generate response with chat history
         response_text = await self.llm_service.generate_pc_build_response(
-            build_data=build_result.model_dump(),
+            build_data=build_data,
             user_request=user_message,
             chat_history=chat_history,
         )
 
         suggestions = [
-            "Показать альтернативные комплектующие",
-            "Изменить бюджет",
-            "Добавить периферию",
+            "Заменить видеокарту",
+            "Заменить процессор",
+            "Добавить клавиатуру/мышь",
         ]
 
         return ChatResponse(
             message=response_text,
             intent=Intent.PC_BUILD,
             session_id=session_id,
-            data=build_result.model_dump(),
+            data=build_data,
+            suggestions=suggestions,
+        )
+
+    async def _handle_component_replace(
+        self,
+        params: dict,
+        user_message: str,
+        session_id: str,
+        chat_history: str = "",
+    ) -> ChatResponse:
+        """Handle component replacement intent."""
+        replace_params = self.llm_service.parse_component_replace_params(params)
+
+        # Get current build from session context
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        current_build = {}
+        if chat_session and chat_session.context:
+            current_build = chat_session.context.get("current_build", {})
+
+        if not current_build or not current_build.get("build"):
+            return ChatResponse(
+                message="Сначала давайте соберём ПК. Скажите, какой бюджет и для чего нужен компьютер?",
+                intent=Intent.COMPONENT_REPLACE,
+                session_id=session_id,
+                suggestions=[
+                    "Собрать игровой ПК за 500000 ₸",
+                    "Собрать офисный ПК за 200000 ₸",
+                ],
+            )
+
+        component_type = replace_params.component_type
+        preference = replace_params.preference
+
+        # Get alternatives
+        alternatives = await self.pc_build_service.get_component_alternatives(
+            component_type=component_type,
+            current_build=current_build.get("build", {}),
+            budget=replace_params.budget,
+            limit=5,
+        )
+
+        alternatives_data = [alt.model_dump() for alt in alternatives]
+
+        # Generate response
+        response_text = await self.llm_service.generate_component_replace_response(
+            component_type=component_type,
+            preference=preference,
+            alternatives=alternatives_data,
+            current_build=current_build,
+            chat_history=chat_history,
+        )
+
+        suggestions = [
+            "Выбрать первый вариант",
+            "Показать ещё варианты",
+            "Заменить другой компонент",
+        ]
+
+        return ChatResponse(
+            message=response_text,
+            intent=Intent.COMPONENT_REPLACE,
+            session_id=session_id,
+            data={"alternatives": alternatives_data, "component_type": component_type},
             suggestions=suggestions,
         )
 

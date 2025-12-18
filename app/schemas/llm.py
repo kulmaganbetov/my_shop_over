@@ -10,6 +10,7 @@ class Intent(str, Enum):
     """Supported user intents."""
 
     PC_BUILD = "pc_build"
+    COMPONENT_REPLACE = "component_replace"
     PRODUCT_SEARCH = "product_search"
     FAQ = "faq"
     GENERAL = "general"
@@ -46,6 +47,14 @@ class PCBuildParams(BaseModel):
     noise_preference: Optional[str] = None
     specific_games: list[str] = Field(default_factory=list)
     specific_components: dict = Field(default_factory=dict)
+
+
+class ComponentReplaceParams(BaseModel):
+    """Parameters for component replacement intent."""
+
+    component_type: str  # cpu, gpu, ram, etc.
+    budget: Optional[int] = None
+    preference: Optional[str] = None  # cheaper, better, specific brand
 
 
 class ProductSearchParams(BaseModel):
