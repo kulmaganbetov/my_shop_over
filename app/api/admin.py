@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.base import get_async_session
 from app.db.repositories import FAQRepository
 from app.llm.service import LLMService
@@ -16,20 +17,85 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+@router.get("/debug/config")
+async def debug_config():
+    """Debug endpoint to check loaded configuration."""
+    from app.core.config import ENV_FILE
+
+    return {
+        "env_file_path": str(ENV_FILE),
+        "env_file_exists": ENV_FILE.exists(),
+        "redis_url": settings.redis_url,
+        "database_url": settings.database_url[:50] + "...",
+        "ftp_host": settings.ftp_host,
+        "ftp_user": settings.ftp_user,
+        "llm_provider": settings.llm_provider,
+        "log_level": settings.log_level,
+    }
+
+
+@router.get("/debug/celery")
+async def debug_celery():
+    """Debug endpoint to check Celery configuration and connectivity."""
+    from app.tasks.celery_app import celery_app
+    import redis
+
+    debug_info = {
+        "broker_url": settings.redis_url,
+        "celery_broker": celery_app.conf.broker_url,
+        "registered_tasks": [],
+        "redis_connected": False,
+        "redis_keys": [],
+        "celery_queue_length": 0,
+    }
+
+    # Check registered tasks
+    try:
+        debug_info["registered_tasks"] = list(celery_app.tasks.keys())
+    except Exception as e:
+        debug_info["registered_tasks_error"] = str(e)
+
+    # Check Redis connectivity
+    try:
+        r = redis.from_url(settings.redis_url)
+        r.ping()
+        debug_info["redis_connected"] = True
+        debug_info["redis_keys"] = r.keys("*")[:20]  # First 20 keys
+        debug_info["celery_queue_length"] = r.llen("celery")
+    except Exception as e:
+        debug_info["redis_error"] = str(e)
+
+    return debug_info
+
+
 @router.post("/sync/products")
 async def trigger_product_sync(background_tasks: BackgroundTasks):
     """Trigger product synchronization from FTP."""
     from app.tasks.ingestion import sync_products_from_ftp
+    from app.tasks.celery_app import celery_app
+
+    logger.info("=" * 50)
+    logger.info("PRODUCT SYNC REQUEST RECEIVED")
+    logger.info("=" * 50)
+    logger.info(f"  Celery broker URL: {celery_app.conf.broker_url}")
+    logger.info(f"  Task name: {sync_products_from_ftp.name}")
 
     try:
+        logger.info("  Sending task to Celery...")
         task = sync_products_from_ftp.delay()
+        logger.info(f"  ✓ Task sent successfully!")
+        logger.info(f"  Task ID: {task.id}")
+        logger.info(f"  Task backend: {task.backend}")
+
         return {
             "status": "queued",
             "task_id": task.id,
+            "task_name": sync_products_from_ftp.name,
+            "broker_url": celery_app.conf.broker_url,
             "message": "Product sync task has been queued",
         }
     except Exception as e:
-        logger.error(f"Failed to queue product sync: {e}")
+        logger.error(f"  ✗ Failed to queue product sync: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

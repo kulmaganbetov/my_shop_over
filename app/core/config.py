@@ -1,16 +1,27 @@
 """Application configuration using Pydantic settings."""
 
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Find project root (where .env should be located)
+# Go up from app/core/config.py -> app/core -> app -> project_root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+ENV_FILE = PROJECT_ROOT / ".env"
+
+# Debug: print which .env file we're looking for
+print(f"[CONFIG] Looking for .env at: {ENV_FILE}")
+print(f"[CONFIG] .env exists: {ENV_FILE.exists()}")
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE) if ENV_FILE.exists() else None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -49,7 +60,13 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    s = Settings()
+    # Debug output to verify configuration
+    print(f"[CONFIG] Loaded settings:")
+    print(f"[CONFIG]   REDIS_URL: {s.redis_url}")
+    print(f"[CONFIG]   DATABASE_URL: {s.database_url[:50]}...")
+    print(f"[CONFIG]   FTP_HOST: {s.ftp_host}")
+    return s
 
 
 settings = get_settings()

@@ -414,13 +414,126 @@ docker exec overshop-redis redis-cli ping
 
 ### Celery worker not processing tasks
 
-```bash
-# Check Celery worker logs
-docker logs overshop-celery-worker -f
+#### Step 1: Check Debug Endpoints
 
-# Restart Celery worker
-docker-compose -f docker-compose.infra.yml restart celery-worker
+```bash
+# Check configuration (verify .env is loaded correctly)
+curl http://localhost:8000/api/v1/admin/debug/config
+
+# Check Celery connectivity and registered tasks
+curl http://localhost:8000/api/v1/admin/debug/celery
 ```
+
+Expected output from `/debug/config`:
+```json
+{
+  "env_file_path": "/path/to/my_shop_over/.env",
+  "env_file_exists": true,
+  "redis_url": "redis://localhost:6379/0",
+  ...
+}
+```
+
+Expected output from `/debug/celery`:
+```json
+{
+  "broker_url": "redis://localhost:6379/0",
+  "celery_broker": "redis://localhost:6379/0",
+  "registered_tasks": ["app.tasks.ingestion.sync_products_from_ftp", ...],
+  "redis_connected": true,
+  "celery_queue_length": 0
+}
+```
+
+#### Step 2: Check Celery Worker Logs
+
+```bash
+# Check Celery worker logs (should show "CELERY WORKER READY" message)
+docker logs overshop-celery-worker -f
+```
+
+When worker starts correctly, you should see:
+```
+============================================================
+CELERY WORKER READY
+============================================================
+  Worker: celery@<container-id>
+  Broker: redis://redis:6379/0
+  Registered tasks:
+    - app.tasks.embeddings.regenerate_all_embeddings
+    - app.tasks.embeddings.update_missing_embeddings
+    - app.tasks.ingestion.import_products_from_csv
+    - app.tasks.ingestion.sync_products_from_ftp
+============================================================
+```
+
+#### Step 3: Test Task Routing
+
+```bash
+# Send a task and check the response
+curl -X POST http://localhost:8000/api/v1/admin/sync/products
+```
+
+Response should include `broker_url`:
+```json
+{
+  "status": "queued",
+  "task_id": "uuid-here",
+  "task_name": "app.tasks.ingestion.sync_products_from_ftp",
+  "broker_url": "redis://localhost:6379/0",
+  "message": "Product sync task has been queued"
+}
+```
+
+#### Step 4: Check Redis Queue
+
+```bash
+# Connect to Redis and check queue length
+docker exec overshop-redis redis-cli LLEN celery
+
+# List all keys
+docker exec overshop-redis redis-cli KEYS '*'
+```
+
+#### Step 5: Verify .env File Location
+
+```bash
+# Make sure .env exists in project root (not in subdirectory)
+ls -la .env
+
+# Check that .env has correct values
+cat .env | grep REDIS_URL
+# Should output: REDIS_URL=redis://localhost:6379/0
+```
+
+#### Step 6: Restart Celery Worker
+
+```bash
+# Restart Celery worker to pick up new configuration
+docker-compose -f docker-compose.infra.yml restart celery-worker
+
+# Watch logs
+docker logs overshop-celery-worker -f
+```
+
+#### Common Issues
+
+**Issue: `.env` not being read**
+- Make sure `.env` is in project root directory
+- Restart FastAPI after creating/modifying `.env`
+- Check console output for `[CONFIG] Looking for .env at: ...`
+
+**Issue: `celery_queue_length` stays at 0 after sending task**
+- This means task was not sent to Redis
+- Check that `broker_url` in response matches what worker is using
+- FastAPI (local) uses `redis://localhost:6379/0`
+- Celery (Docker) uses `redis://redis:6379/0`
+- Both should connect to the same Redis (port 6379 is exposed)
+
+**Issue: Worker not showing registered tasks**
+- Celery worker may still be installing dependencies
+- Wait for `pip install` to complete (check logs)
+- Look for "CELERY WORKER READY" message in logs
 
 ### Port already in use
 
