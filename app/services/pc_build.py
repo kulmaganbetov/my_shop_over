@@ -155,8 +155,8 @@ class PCBuildService:
 
             # Get products for this component type within budget range
             # Use min_price to find products that match budget, not just cheapest
-            min_budget = int(component_budget * 0.5)  # 50% of allocated budget
-            max_budget = int(component_budget * 1.3)  # 130% of allocated budget
+            min_budget = int(component_budget * 0.4)  # 40% of allocated budget
+            max_budget = int(component_budget * 1.0)  # 100% of allocated budget (strict)
 
             products = await self.product_repo.get_by_component_type(
                 component_type=component_type,
@@ -229,11 +229,11 @@ class PCBuildService:
         2. Stock availability
         3. Compatibility with current build
         """
-        # Filter products within budget
+        # Filter products within budget (strict - no overflow)
         candidates = []
         for product in products:
             price = product.discount_price or product.price or 0
-            if price <= budget * 1.1 and product.stock > 0:
+            if price <= budget and product.stock > 0:
                 candidates.append((product, price))
 
         if not candidates:
@@ -257,7 +257,13 @@ class PCBuildService:
             if product is None:
                 continue
 
-            product_specs = product.specifications or {}
+            # Handle both ProductSchema objects and dicts
+            if isinstance(product, dict):
+                product_specs = product.get("specifications") or {}
+                product_name = product.get("name", "")
+            else:
+                product_specs = product.specifications or {}
+                product_name = product.name if hasattr(product, 'name') else ""
 
             if component_type == "cpu":
                 specs["cpu_socket"] = product_specs.get("socket")
@@ -271,7 +277,7 @@ class PCBuildService:
                 specs["ram_type"] = product_specs.get("type")
 
             elif component_type == "gpu":
-                specs["gpu_model"] = product.name
+                specs["gpu_model"] = product_name
                 specs["gpu_length"] = product_specs.get("length", 300)
                 specs["gpu_tdp"] = product_specs.get("tdp", 200)
 
