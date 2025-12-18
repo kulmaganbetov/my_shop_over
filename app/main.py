@@ -65,8 +65,8 @@ async def check_and_trigger_startup_tasks():
             if missing_embeddings > 0:
                 logger.info("")
                 logger.info(f"  → {missing_embeddings} products missing embeddings.")
-                logger.info("  → Triggering embedding generation (batch_size=100)...")
-                task = update_missing_embeddings.delay(batch_size=100)
+                logger.info(f"  → Triggering embedding generation (batch_size={settings.embedding_batch_size})...")
+                task = update_missing_embeddings.delay(batch_size=settings.embedding_batch_size)
                 logger.info(f"  → Embedding task queued: {task.id}")
 
                 # Note: This will only process first batch.
