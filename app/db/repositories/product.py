@@ -99,10 +99,25 @@ class ProductRepository(BaseRepository[Product]):
         max_price: Optional[float] = None,
         in_stock_only: bool = True,
         limit: int = 50,
+        search_keywords: list[str] = None,
     ) -> list[Product]:
-        """Get products by component type for PC builds."""
+        """Get products by component type for PC builds.
+
+        Args:
+            component_type: Exact component type to match
+            search_keywords: Additional keywords to search in category/name
+        """
+        # Build type/category matching condition
+        type_conditions = [Product.component_type == component_type]
+
+        # Also search by category if keywords provided
+        if search_keywords:
+            for kw in search_keywords:
+                type_conditions.append(Product.category.ilike(f"%{kw}%"))
+                type_conditions.append(Product.name.ilike(f"%{kw}%"))
+
         conditions = [
-            Product.component_type == component_type,
+            or_(*type_conditions),
             Product.is_active == True,
         ]
 

@@ -28,16 +28,16 @@ DEFAULT_BUDGETS = {
     "default": 450000,     # По умолчанию
 }
 
-# Component types mapping
+# Component types mapping - (primary_type, search_keywords)
 COMPONENT_TYPES = {
-    "cpu": "Процессоры",
-    "gpu": "Видеокарты",
-    "motherboard": "Материнские платы",
-    "ram": "Оперативная память",
-    "storage": "SSD накопители",
-    "psu": "Блоки питания",
-    "case": "Корпуса",
-    "cooler": "Кулеры",
+    "cpu": ("Процессоры", ["Процессор", "CPU", "Intel Core", "AMD Ryzen"]),
+    "gpu": ("Видеокарты", ["Видеокарта", "GeForce", "Radeon", "RTX", "GTX"]),
+    "motherboard": ("Материнские платы", ["Материнская плата", "Motherboard"]),
+    "ram": ("Оперативная память", ["Оперативная память", "DDR4", "DDR5", "RAM"]),
+    "storage": ("SSD накопители", ["SSD", "Накопитель", "Жесткий диск", "HDD", "NVMe"]),
+    "psu": ("Блоки питания", ["Блок питания", "PSU"]),
+    "case": ("Корпуса", ["Корпус", "Case"]),
+    "cooler": ("Кулеры", ["Кулер", "Охлаждение", "Cooler"]),
 }
 
 
@@ -75,7 +75,12 @@ class PCBuildService:
         # Check for matching presets first
         presets = await self.preset_repo.get_by_budget(budget, purpose)
         if presets:
-            return await self._build_from_preset(presets[0], budget)
+            preset_result = await self._build_from_preset(presets[0], budget)
+            # If preset has at least 3 valid components, use it
+            valid_components = sum(1 for v in preset_result.build.values() if v is not None)
+            if valid_components >= 3:
+                return preset_result
+            logger.info(f"Preset has only {valid_components} valid components, building from scratch")
 
         # Build from scratch
         return await self._build_from_scratch(budget, purpose, params)
@@ -140,10 +145,12 @@ class PCBuildService:
 
         for component in component_order:
             component_budget = budget_allocation.get(component, 0)
-            component_type = COMPONENT_TYPES.get(component)
+            component_config = COMPONENT_TYPES.get(component)
 
-            if not component_type:
+            if not component_config:
                 continue
+
+            component_type, search_keywords = component_config
 
             # Get products for this component type within budget
             products = await self.product_repo.get_by_component_type(
@@ -151,7 +158,9 @@ class PCBuildService:
                 max_price=component_budget * 1.2,
                 in_stock_only=True,
                 limit=10,
+                search_keywords=search_keywords,
             )
+            logger.info(f"Found {len(products)} products for {component} (budget: {component_budget})")
 
             if products:
                 # Select best product within budget
@@ -273,15 +282,18 @@ class PCBuildService:
         limit: int = 5,
     ) -> list[ProductSchema]:
         """Get alternative components compatible with current build."""
-        db_component_type = COMPONENT_TYPES.get(component_type)
-        if not db_component_type:
+        component_config = COMPONENT_TYPES.get(component_type)
+        if not component_config:
             return []
+
+        db_component_type, search_keywords = component_config
 
         products = await self.product_repo.get_by_component_type(
             component_type=db_component_type,
             max_price=budget,
             in_stock_only=True,
             limit=limit * 2,
+            search_keywords=search_keywords,
         )
 
         # Filter for compatibility
