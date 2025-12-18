@@ -58,8 +58,8 @@ class Settings(BaseSettings):
 
     # Auto-sync settings
     auto_sync_on_startup: bool = True  # Check and sync on FastAPI startup
-    embedding_batch_size: int = 100  # Products per embedding batch
-    embedding_interval_seconds: int = 60  # How often to check for missing embeddings
+    embedding_batch_size: int = 500  # Products per embedding batch (OpenAI supports up to 2048)
+    embedding_interval_seconds: int = 30  # How often to check for missing embeddings
     product_sync_interval_seconds: int = 3600  # How often to sync from FTP (1 hour)
 
 

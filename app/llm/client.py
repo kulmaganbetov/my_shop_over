@@ -39,6 +39,11 @@ class BaseLLMClient(ABC):
         """Generate an embedding for text."""
         pass
 
+    @abstractmethod
+    async def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts in one API call."""
+        pass
+
 
 class OpenAIClient(BaseLLMClient):
     """OpenAI API client."""
@@ -93,6 +98,18 @@ class OpenAIClient(BaseLLMClient):
             input=text,
         )
         return response.data[0].embedding
+
+    async def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts in one API call (up to 2048 texts)."""
+        if not texts:
+            return []
+        response = await self.client.embeddings.create(
+            model=self.embedding_model,
+            input=texts,
+        )
+        # Sort by index to maintain order
+        sorted_data = sorted(response.data, key=lambda x: x.index)
+        return [item.embedding for item in sorted_data]
 
 
 class AnthropicClient(BaseLLMClient):
@@ -153,6 +170,17 @@ class AnthropicClient(BaseLLMClient):
             input=text,
         )
         return response.data[0].embedding
+
+    async def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts using OpenAI."""
+        if not texts:
+            return []
+        response = await self._openai_client.embeddings.create(
+            model=settings.embedding_model,
+            input=texts,
+        )
+        sorted_data = sorted(response.data, key=lambda x: x.index)
+        return [item.embedding for item in sorted_data]
 
 
 def get_llm_client() -> BaseLLMClient:

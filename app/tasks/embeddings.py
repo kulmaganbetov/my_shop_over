@@ -129,58 +129,90 @@ def generate_product_embedding(self, product_id: int):
 @celery_app.task
 def update_missing_embeddings(batch_size: int = 100):
     """
-    Find products without embeddings and generate them.
+    Find products without embeddings and generate them in BATCH.
 
-    This is useful for:
-    - New products added via FTP sync
-    - Products that failed embedding generation
+    Uses OpenAI batch API to generate multiple embeddings in one request.
+    Much faster than individual requests!
     """
     logger.info("")
     logger.info("=" * 60)
-    logger.info("EMBEDDING UPDATE: Finding products without embeddings")
+    logger.info("EMBEDDING UPDATE: Batch processing")
     logger.info("=" * 60)
     logger.info(f"  Batch size: {batch_size}")
 
     engine = create_engine(settings.database_url_sync)
 
     with Session(engine) as session:
-        # Count total products
+        # Count totals
         total_products = session.query(Product).filter(Product.is_active == True).count()
         total_embeddings = session.query(ProductEmbedding).count()
+        missing = total_products - total_embeddings
 
         logger.info(f"  Total active products: {total_products}")
         logger.info(f"  Products with embeddings: {total_embeddings}")
-        logger.info(f"  Products missing embeddings: {total_products - total_embeddings}")
+        logger.info(f"  Products missing embeddings: {missing}")
+
+        if missing == 0:
+            logger.info("  ✓ All products have embeddings!")
+            return {"status": "success", "processed": 0}
 
         # Find products without embeddings
         subquery = select(ProductEmbedding.product_id)
-        products_without_embeddings = (
-            session.query(Product.id, Product.name)
+        products = (
+            session.query(Product)
             .filter(~Product.id.in_(subquery))
             .filter(Product.is_active == True)
             .limit(batch_size)
             .all()
         )
 
-        product_ids = [p.id for p in products_without_embeddings]
+        if not products:
+            logger.info("  ✓ All products have embeddings!")
+            return {"status": "success", "processed": 0}
 
-    if not product_ids:
-        logger.info("  ✓ All products have embeddings!")
-        return {"status": "success", "processed": 0}
+        logger.info(f"  Processing {len(products)} products in ONE API call...")
 
-    logger.info(f"  Found {len(product_ids)} products without embeddings")
-    logger.info(f"  Queuing embedding generation tasks...")
+        # Create texts for all products
+        texts = []
+        for product in products:
+            text = create_product_text(product)
+            texts.append(text)
 
-    # Queue embedding generation for each product
-    for i, product_id in enumerate(product_ids):
-        generate_product_embedding.delay(product_id)
-        if (i + 1) % 10 == 0:
-            logger.info(f"    Queued {i + 1}/{len(product_ids)}...")
+        # Get ALL embeddings in ONE API call
+        logger.info(f"  Calling OpenAI Batch Embedding API...")
+        client = get_llm_client()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    logger.info(f"  ✓ Queued {len(product_ids)} tasks to Celery")
+        try:
+            embeddings = loop.run_until_complete(client.get_embeddings_batch(texts))
+            logger.info(f"  ✓ Got {len(embeddings)} embeddings in one request!")
+        except Exception as e:
+            logger.error(f"  ✗ Batch API error: {e}")
+            raise
+        finally:
+            loop.close()
+
+        # Save all embeddings to database
+        logger.info(f"  Saving to PostgreSQL...")
+        saved = 0
+        for product, embedding, text in zip(products, embeddings, texts):
+            product_embedding = ProductEmbedding(
+                product_id=product.id,
+                embedding=embedding,
+                embedding_text=text,
+            )
+            session.add(product_embedding)
+            saved += 1
+
+        session.commit()
+        logger.info(f"  ✓ Saved {saved} embeddings to PostgreSQL")
+
+    remaining = missing - saved
+    logger.info(f"  Remaining without embeddings: {remaining}")
     logger.info("=" * 60)
 
-    return {"status": "success", "queued": len(product_ids)}
+    return {"status": "success", "processed": saved, "remaining": remaining}
 
 
 @celery_app.task
