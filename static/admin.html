@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель | Over-Shop.kz</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --bg-main: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-sidebar: #1e293b;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --text-light: #f1f5f9;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-blue: #3b82f6;
+            --border: #e2e8f0;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-main);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 260px;
+            background: var(--bg-sidebar);
+            color: var(--text-light);
+            padding: 24px 16px;
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 12px;
+            margin-bottom: 32px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo-text {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .nav-section {
+            margin-bottom: 24px;
+        }
+
+        .nav-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            padding: 0 12px;
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+        }
+
+        .nav-link.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .nav-link svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .nav-badge {
+            margin-left: auto;
+            background: var(--accent-red);
+            color: white;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 24px;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .page-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .refresh-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .refresh-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .stat-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .stat-icon.blue { background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); }
+        .stat-icon.green { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); }
+        .stat-icon.yellow { background: rgba(245, 158, 11, 0.1); color: var(--accent-yellow); }
+        .stat-icon.red { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); }
+
+        .stat-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* Sessions Table */
+        .table-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .table-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .table-tabs {
+            display: flex;
+            gap: 8px;
+        }
+
+        .tab-btn {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            background: transparent;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            background: var(--bg-main);
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: var(--bg-main);
+        }
+
+        td {
+            font-size: 14px;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: var(--bg-main);
+        }
+
+        .session-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .message-preview {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge.manager {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+        }
+
+        .badge.normal {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+        }
+
+        .view-btn {
+            padding: 6px 12px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .view-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        /* Session Detail Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: var(--bg-main);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--border);
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .chat-log {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .log-message {
+            display: flex;
+            gap: 12px;
+            max-width: 80%;
+        }
+
+        .log-message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .log-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 12px;
+        }
+
+        .log-message.assistant .log-avatar {
+            background: var(--primary);
+            color: white;
+        }
+
+        .log-message.user .log-avatar {
+            background: var(--border);
+            color: var(--text-secondary);
+        }
+
+        .log-content {
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .log-message.assistant .log-content {
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+        }
+
+        .log-message.user .log-content {
+            background: var(--primary);
+            color: white;
+        }
+
+        .log-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .log-message.user .log-meta {
+            text-align: right;
+        }
+
+        .intent-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+            border-radius: 4px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .sidebar {
+                width: 70px;
+                padding: 16px 8px;
+            }
+            .logo-text, .nav-title, .nav-link span {
+                display: none;
+            }
+            .nav-link {
+                justify-content: center;
+                padding: 12px;
+            }
+            .main-content {
+                margin-left: 70px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <span class="logo-text">Over-Shop Admin</span>
+        </div>
+
+        <nav class="nav-section">
+            <div class="nav-title">Главное</div>
+            <a class="nav-link active" onclick="showPage('dashboard')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"/>
+                    <rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/>
+                    <rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                <span>Дашборд</span>
+            </a>
+            <a class="nav-link" onclick="showPage('sessions')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>Сессии чата</span>
+            </a>
+            <a class="nav-link" onclick="showPage('manager')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                <span>Вызов менеджера</span>
+                <span class="nav-badge" id="manager-count">0</span>
+            </a>
+        </nav>
+
+        <nav class="nav-section">
+            <div class="nav-title">Управление</div>
+            <a class="nav-link" onclick="triggerSync('products')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+                <span>Синхр. товаров</span>
+            </a>
+            <a class="nav-link" onclick="triggerSync('embeddings')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                </svg>
+                <span>Обновить эмбеддинги</span>
+            </a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Dashboard Page -->
+        <div id="page-dashboard">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Дашборд</h1>
+                    <p class="page-subtitle">Обзор работы AI-ассистента</p>
+                </div>
+                <button class="refresh-btn" onclick="loadStats()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Обновить
+                </button>
+            </div>
+
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="stat-value" id="stat-sessions">-</div>
+                    <div class="stat-label">Всего сессий</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon green">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="stat-value" id="stat-messages">-</div>
+                    <div class="stat-label">Всего сообщений</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon yellow">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="stat-value" id="stat-products">-</div>
+                    <div class="stat-label">Товаров в базе</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon red">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="stat-value" id="stat-manager">-</div>
+                    <div class="stat-label">Вызовов менеджера</div>
+                </div>
+            </div>
+
+            <div class="table-card">
+                <div class="table-header">
+                    <h3 class="table-title">Распределение интентов</h3>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Интент</th>
+                            <th>Количество</th>
+                        </tr>
+                    </thead>
+                    <tbody id="intents-table">
+                        <tr><td colspan="2" class="loading"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sessions Page -->
+        <div id="page-sessions" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Сессии чата</h1>
+                    <p class="page-subtitle">История диалогов с пользователями</p>
+                </div>
+                <button class="refresh-btn" onclick="loadSessions()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Обновить
+                </button>
+            </div>
+
+            <div class="table-card">
+                <div class="table-header">
+                    <h3 class="table-title">Все сессии</h3>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID сессии</th>
+                            <th>Первое сообщение</th>
+                            <th>Сообщений</th>
+                            <th>Время</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessions-table">
+                        <tr><td colspan="6" class="loading"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Manager Requests Page -->
+        <div id="page-manager" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Запросы менеджера</h1>
+                    <p class="page-subtitle">Сессии с запросом на связь с человеком</p>
+                </div>
+                <button class="refresh-btn" onclick="loadManagerRequests()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    Обновить
+                </button>
+            </div>
+
+            <div class="table-card">
+                <div class="table-header">
+                    <h3 class="table-title">Ожидают ответа</h3>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID сессии</th>
+                            <th>Первое сообщение</th>
+                            <th>Сообщений</th>
+                            <th>Время</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="manager-table">
+                        <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Session Detail Modal -->
+    <div class="modal-overlay" id="session-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Диалог сессии</h3>
+                <button class="modal-close" onclick="closeModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="chat-log" id="chat-log">
+                    <div class="loading"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin + '/api/v1/admin';
+        let currentPage = 'dashboard';
+
+        // Navigation
+        function showPage(page) {
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+            document.querySelectorAll('[id^="page-"]').forEach(p => p.style.display = 'none');
+
+            document.querySelector(`[onclick="showPage('${page}')"]`).classList.add('active');
+            document.getElementById(`page-${page}`).style.display = 'block';
+
+            currentPage = page;
+
+            if (page === 'dashboard') loadStats();
+            if (page === 'sessions') loadSessions();
+            if (page === 'manager') loadManagerRequests();
+        }
+
+        // Load Statistics
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_URL}/stats`);
+                const data = await response.json();
+
+                document.getElementById('stat-sessions').textContent = data.total_sessions || 0;
+                document.getElementById('stat-messages').textContent = data.total_messages || 0;
+                document.getElementById('stat-products').textContent = data.total_products || 0;
+                document.getElementById('stat-manager').textContent = data.total_manager_requests || 0;
+                document.getElementById('manager-count').textContent = data.total_manager_requests || 0;
+
+                // Intents table
+                const intentsTable = document.getElementById('intents-table');
+                if (data.intent_distribution && data.intent_distribution.length > 0) {
+                    intentsTable.innerHTML = data.intent_distribution.map(item => `
+                        <tr>
+                            <td><span class="intent-tag">${item.intent}</span></td>
+                            <td>${item.count}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    intentsTable.innerHTML = '<tr><td colspan="2" class="empty-state">Нет данных</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load Sessions
+        async function loadSessions() {
+            try {
+                const response = await fetch(`${API_URL}/sessions?limit=50`);
+                const data = await response.json();
+
+                const table = document.getElementById('sessions-table');
+                if (data.sessions && data.sessions.length > 0) {
+                    table.innerHTML = data.sessions.map(session => `
+                        <tr>
+                            <td class="session-id">${session.session_id.substring(0, 16)}...</td>
+                            <td class="message-preview">${escapeHtml(session.first_user_message || '-')}</td>
+                            <td>${session.message_count}</td>
+                            <td>${formatDate(session.last_message_time)}</td>
+                            <td>
+                                ${session.manager_requested
+                                    ? '<span class="badge manager">Менеджер</span>'
+                                    : '<span class="badge normal">Обычная</span>'}
+                            </td>
+                            <td>
+                                <button class="view-btn" onclick="viewSession('${session.session_id}')">Просмотр</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    table.innerHTML = '<tr><td colspan="6" class="empty-state">Нет сессий</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        // Load Manager Requests
+        async function loadManagerRequests() {
+            try {
+                const response = await fetch(`${API_URL}/manager-requests?limit=50`);
+                const data = await response.json();
+
+                const table = document.getElementById('manager-table');
+                if (data.manager_requests && data.manager_requests.length > 0) {
+                    table.innerHTML = data.manager_requests.map(session => `
+                        <tr>
+                            <td class="session-id">${session.session_id.substring(0, 16)}...</td>
+                            <td class="message-preview">${escapeHtml(session.first_user_message || '-')}</td>
+                            <td>${session.message_count}</td>
+                            <td>${formatDate(session.last_message_time)}</td>
+                            <td>
+                                <button class="view-btn" onclick="viewSession('${session.session_id}')">Просмотр</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    table.innerHTML = '<tr><td colspan="5" class="empty-state">Нет запросов</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading manager requests:', error);
+            }
+        }
+
+        // View Session Detail
+        async function viewSession(sessionId) {
+            document.getElementById('session-modal').classList.add('active');
+            document.getElementById('chat-log').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+            try {
+                const response = await fetch(`${API_URL}/sessions/${sessionId}`);
+                const data = await response.json();
+
+                const chatLog = document.getElementById('chat-log');
+                if (data.messages && data.messages.length > 0) {
+                    chatLog.innerHTML = data.messages.map(msg => `
+                        <div class="log-message ${msg.role}">
+                            <div class="log-avatar">${msg.role === 'assistant' ? 'R' : 'U'}</div>
+                            <div>
+                                <div class="log-content">${escapeHtml(msg.content)}</div>
+                                <div class="log-meta">
+                                    ${formatDate(msg.created_at)}
+                                    ${msg.intent ? `<span class="intent-tag">${msg.intent}</span>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    chatLog.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+                }
+            } catch (error) {
+                console.error('Error loading session:', error);
+                document.getElementById('chat-log').innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('session-modal').classList.remove('active');
+        }
+
+        // Trigger Sync
+        async function triggerSync(type) {
+            try {
+                const endpoint = type === 'products' ? '/sync/products' : '/sync/embeddings';
+                const response = await fetch(`${API_URL}${endpoint}`, { method: 'POST' });
+                const data = await response.json();
+                alert(`Задача поставлена в очередь! ID: ${data.task_id}`);
+            } catch (error) {
+                console.error('Error triggering sync:', error);
+                alert('Ошибка запуска синхронизации');
+            }
+        }
+
+        // Helpers
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('ru-RU', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Close modal on outside click
+        document.getElementById('session-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+
+        // Initial load
+        loadStats();
+    </script>
+</body>
+</html>

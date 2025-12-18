@@ -10,16 +10,16 @@
             --primary: #6366f1;
             --primary-dark: #4f46e5;
             --primary-light: #818cf8;
-            --bg-dark: #0f0f1a;
-            --bg-card: #1a1a2e;
-            --bg-input: #16162a;
-            --text-primary: #ffffff;
-            --text-secondary: #a0a0b0;
-            --text-muted: #6b6b7b;
+            --bg-main: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-input: #f1f5f9;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
             --accent-green: #10b981;
             --accent-blue: #3b82f6;
-            --border: #2a2a3e;
-            --glass: rgba(255, 255, 255, 0.05);
+            --border: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
         }
 
         * {
@@ -30,16 +30,13 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-dark);
+            background: var(--bg-main);
             color: var(--text-primary);
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background-image:
-                radial-gradient(ellipse at top, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
-                radial-gradient(ellipse at bottom, rgba(59, 130, 246, 0.05) 0%, transparent 50%);
         }
 
         .chat-container {
@@ -53,16 +50,13 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            box-shadow:
-                0 0 0 1px rgba(255, 255, 255, 0.05),
-                0 25px 50px -12px rgba(0, 0, 0, 0.5),
-                0 0 100px rgba(99, 102, 241, 0.1);
+            box-shadow: var(--shadow);
         }
 
         /* Header */
         .chat-header {
             padding: 20px 24px;
-            background: linear-gradient(180deg, var(--bg-card) 0%, transparent 100%);
+            background: var(--bg-card);
             border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
@@ -79,6 +73,7 @@
             justify-content: center;
             font-weight: 700;
             font-size: 20px;
+            color: white;
             box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
         }
 
@@ -92,6 +87,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            color: var(--text-primary);
         }
 
         .header-subtitle {
@@ -133,6 +129,7 @@
             display: flex;
             flex-direction: column;
             gap: 16px;
+            background: var(--bg-main);
         }
 
         .chat-messages::-webkit-scrollbar {
@@ -179,6 +176,7 @@
 
         .message.assistant .message-avatar {
             background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+            color: white;
         }
 
         .message.user .message-avatar {
@@ -194,14 +192,16 @@
         }
 
         .message.assistant .message-content {
-            background: var(--glass);
+            background: var(--bg-card);
             border: 1px solid var(--border);
             border-bottom-left-radius: 6px;
+            color: var(--text-primary);
         }
 
         .message.user .message-content {
             background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
             border-bottom-right-radius: 6px;
+            color: white;
         }
 
         .message-time {
@@ -219,7 +219,7 @@
             display: flex;
             gap: 4px;
             padding: 14px 18px;
-            background: var(--glass);
+            background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 18px;
             border-bottom-left-radius: 6px;
@@ -229,7 +229,7 @@
         .typing-indicator span {
             width: 8px;
             height: 8px;
-            background: var(--text-secondary);
+            background: var(--text-muted);
             border-radius: 50%;
             animation: typing 1.4s infinite;
         }
@@ -252,7 +252,7 @@
 
         .suggestion-btn {
             padding: 8px 14px;
-            background: var(--glass);
+            background: var(--bg-main);
             border: 1px solid var(--border);
             border-radius: 20px;
             color: var(--text-secondary);
@@ -270,7 +270,7 @@
         /* Input area */
         .chat-input-area {
             padding: 20px 24px;
-            background: var(--bg-input);
+            background: var(--bg-card);
             border-top: 1px solid var(--border);
         }
 
@@ -278,7 +278,7 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            background: var(--bg-card);
+            background: var(--bg-input);
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 8px;
@@ -323,8 +323,9 @@
         }
 
         .input-btn.file-btn {
-            background: var(--glass);
+            background: var(--bg-card);
             color: var(--text-secondary);
+            border: 1px solid var(--border);
         }
 
         .input-btn.file-btn:hover {
@@ -360,7 +361,7 @@
             align-items: center;
             gap: 8px;
             padding: 8px 12px;
-            background: var(--glass);
+            background: var(--bg-input);
             border: 1px solid var(--border);
             border-radius: 8px;
             margin-bottom: 12px;
@@ -400,6 +401,7 @@
             align-items: center;
             justify-content: center;
             font-size: 36px;
+            color: white;
             box-shadow: 0 8px 30px rgba(99, 102, 241, 0.3);
         }
 
@@ -407,6 +409,7 @@
             font-size: 24px;
             font-weight: 600;
             margin-bottom: 8px;
+            color: var(--text-primary);
         }
 
         .welcome-subtitle {
@@ -464,6 +467,24 @@
             display: none;
         }
 
+        /* Manager call button */
+        .manager-btn {
+            padding: 8px 14px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 20px;
+            color: #ef4444;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .manager-btn:hover {
+            background: #ef4444;
+            border-color: #ef4444;
+            color: white;
+        }
+
         /* Responsive */
         @media (max-width: 600px) {
             body {
@@ -519,9 +540,10 @@
                     Помогу найти товары, собрать компьютер или отвечу на вопросы о доставке и гарантии.
                 </p>
                 <div class="suggestions" style="justify-content: center; margin-top: 24px;">
-                    <button class="suggestion-btn" onclick="sendSuggestion('Собери мне игровой ПК за 500000 тенге')">🎮 Собрать игровой ПК</button>
-                    <button class="suggestion-btn" onclick="sendSuggestion('Покажи видеокарты RTX')">🖥️ Видеокарты RTX</button>
-                    <button class="suggestion-btn" onclick="sendSuggestion('Как оформить доставку?')">📦 О доставке</button>
+                    <button class="suggestion-btn" onclick="sendSuggestion('Собери мне игровой ПК за 500000 тенге')">Собрать игровой ПК</button>
+                    <button class="suggestion-btn" onclick="sendSuggestion('Покажи видеокарты RTX')">Видеокарты RTX</button>
+                    <button class="suggestion-btn" onclick="sendSuggestion('Как оформить доставку?')">О доставке</button>
+                    <button class="manager-btn" onclick="sendSuggestion('Позови менеджера')">Связаться с менеджером</button>
                 </div>
             </div>
         </div>
@@ -534,7 +556,7 @@
                     <path d="M14 2v6h6"/>
                 </svg>
                 <span class="file-name" id="file-name"></span>
-                <span class="remove-file" onclick="removeFile()">✕</span>
+                <span class="remove-file" onclick="removeFile()">x</span>
             </div>
             <div class="input-container">
                 <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt" onchange="handleFileSelect(event)">
@@ -561,7 +583,7 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:8000/api/v1';
+        const API_URL = window.location.origin + '/api/v1';
         let sessionId = localStorage.getItem('chatSessionId') || generateSessionId();
         let selectedFile = null;
         let isFirstMessage = true;
@@ -672,13 +694,12 @@
 
             let extraContent = '';
 
-            // Products are now included in the text response, no cards needed
-
             // Add suggestions if available
             if (data && data.suggestions && data.suggestions.length > 0) {
                 extraContent += '<div class="suggestions">';
                 data.suggestions.forEach(suggestion => {
-                    extraContent += `<button class="suggestion-btn" onclick="sendSuggestion('${escapeHtml(suggestion)}')">${escapeHtml(suggestion)}</button>`;
+                    const btnClass = suggestion.toLowerCase().includes('менеджер') ? 'manager-btn' : 'suggestion-btn';
+                    extraContent += `<button class="${btnClass}" onclick="sendSuggestion('${escapeHtml(suggestion)}')">${escapeHtml(suggestion)}</button>`;
                 });
                 extraContent += '</div>';
             }

@@ -10,101 +10,71 @@ IMPORTANT: You must return ONLY valid JSON, no other text.
 
 Available intents:
 - "pc_build": User wants to build or configure a PC
-- "component_replace": User wants to replace/change a specific component in their build
+- "component_replace": User wants to replace/change a specific component
+- "select_alternative": User selects a specific option from alternatives (e.g., "первый", "второй", "выбираю 1")
+- "add_peripheral": User wants to add peripherals (monitor, mouse, keyboard, headset)
 - "product_search": User is looking for specific products
-- "faq": User has questions about the store (delivery, warranty, payment, etc.)
-- "general": General conversation or greeting
+- "show_specs": User wants to see specifications of a product
+- "filter_price": User wants to filter products by price
+- "delivery_info": User asks about delivery
+- "call_manager": User wants to talk to a manager/human
+- "faq": User has questions about the store
+- "general": General conversation
 
-For pc_build, extract these parameters if mentioned:
-- budget: number (in local currency)
-- budget_min: minimum budget if range specified
-- budget_max: maximum budget if range specified
+For pc_build:
+- budget: number (in tenge)
 - purpose: one of ["gaming", "work", "office", "streaming", "content_creation", "general"]
-- resolution: target gaming resolution (e.g., "1080p", "1440p", "4k")
-- specific_games: list of games mentioned
-- specific_components: any specific component preferences
 
-For component_replace (when user wants to change a specific part in existing build):
+For component_replace:
 - component_type: one of ["cpu", "gpu", "motherboard", "ram", "storage", "psu", "case", "cooler"]
-- budget: max budget for the component
-- preference: "cheaper", "better", or specific brand name
+- preference: "cheaper", "better", or brand name
 
-For product_search, extract:
-- query: the search query
-- category: product category if mentioned
+For select_alternative:
+- selection: number (1, 2, 3, etc.)
+
+For add_peripheral:
+- peripheral_type: one of ["monitor", "mouse", "keyboard", "headset", "mousepad", "webcam"]
+- budget: optional budget
+
+For filter_price:
 - min_price: minimum price
 - max_price: maximum price
-- manufacturer: brand/manufacturer
-- in_stock_only: boolean
 
-For faq, extract:
-- question: the user's question
-- topic: one of ["delivery", "warranty", "payment", "return", "order", "other"]
+For product_search:
+- query: the search query
+- category: product category if mentioned
+
+For call_manager:
+- reason: why the user wants a manager (optional)
 
 Examples:
 
-User: "Хочу собрать игровой ПК за 500000 тенге"
-Response:
-{
-  "intent": "pc_build",
-  "confidence": 0.95,
-  "params": {
-    "budget": 500000,
-    "purpose": "gaming"
-  }
-}
+User: "Собери игровой ПК за 500000"
+{"intent": "pc_build", "confidence": 0.95, "params": {"budget": 500000, "purpose": "gaming"}}
 
-User: "Поменяй видеокарту на подешевле"
-Response:
-{
-  "intent": "component_replace",
-  "confidence": 0.9,
-  "params": {
-    "component_type": "gpu",
-    "preference": "cheaper"
-  }
-}
+User: "Поменяй видеокарту"
+{"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "gpu"}}
 
-User: "Замени процессор на AMD"
-Response:
-{
-  "intent": "component_replace",
-  "confidence": 0.9,
-  "params": {
-    "component_type": "cpu",
-    "preference": "AMD"
-  }
-}
+User: "Выбираю первый вариант"
+{"intent": "select_alternative", "confidence": 0.95, "params": {"selection": 1}}
 
-User: "Есть ли видеокарты RTX 4070?"
-Response:
-{
-  "intent": "product_search",
-  "confidence": 0.9,
-  "params": {
-    "query": "видеокарта RTX 4070",
-    "category": "Видеокарты"
-  }
-}
+User: "Добавь монитор"
+{"intent": "add_peripheral", "confidence": 0.9, "params": {"peripheral_type": "monitor"}}
 
-User: "Как оформить доставку?"
-Response:
-{
-  "intent": "faq",
-  "confidence": 0.95,
-  "params": {
-    "question": "Как оформить доставку?",
-    "topic": "delivery"
-  }
-}
+User: "Покажи характеристики"
+{"intent": "show_specs", "confidence": 0.9, "params": {}}
+
+User: "Фильтр до 100000"
+{"intent": "filter_price", "confidence": 0.9, "params": {"max_price": 100000}}
+
+User: "Информация о доставке"
+{"intent": "delivery_info", "confidence": 0.95, "params": {}}
+
+User: "Позови менеджера" / "Хочу связаться с человеком"
+{"intent": "call_manager", "confidence": 0.95, "params": {"reason": "хочет поговорить с человеком"}}
 
 User: "Привет!"
-Response:
-{
-  "intent": "general",
-  "confidence": 1.0,
-  "params": {}
-}
+{"intent": "general", "confidence": 1.0, "params": {}}
 """
 
 INTENT_DETECTION_USER_PROMPT = """Analyze the following user message and return JSON with intent and parameters.

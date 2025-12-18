@@ -11,7 +11,13 @@ class Intent(str, Enum):
 
     PC_BUILD = "pc_build"
     COMPONENT_REPLACE = "component_replace"
+    SELECT_ALTERNATIVE = "select_alternative"
+    ADD_PERIPHERAL = "add_peripheral"
     PRODUCT_SEARCH = "product_search"
+    SHOW_SPECS = "show_specs"
+    FILTER_PRICE = "filter_price"
+    DELIVERY_INFO = "delivery_info"
+    CALL_MANAGER = "call_manager"
     FAQ = "faq"
     GENERAL = "general"
     UNKNOWN = "unknown"
@@ -55,6 +61,27 @@ class ComponentReplaceParams(BaseModel):
     component_type: str  # cpu, gpu, ram, etc.
     budget: Optional[int] = None
     preference: Optional[str] = None  # cheaper, better, specific brand
+
+
+class SelectAlternativeParams(BaseModel):
+    """Parameters for selecting an alternative component."""
+
+    selection: int  # 1, 2, 3, etc.
+    component_type: Optional[str] = None
+
+
+class AddPeripheralParams(BaseModel):
+    """Parameters for adding peripherals."""
+
+    peripheral_type: str  # monitor, mouse, keyboard, headset
+    budget: Optional[int] = None
+
+
+class FilterPriceParams(BaseModel):
+    """Parameters for price filtering."""
+
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
 
 
 class ProductSearchParams(BaseModel):

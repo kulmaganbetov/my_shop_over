@@ -183,3 +183,124 @@ async def get_task_status(task_id: str):
         "status": task.status,
         "result": task.result if task.ready() else None,
     }
+
+
+# ============= Chat Session Admin Endpoints =============
+
+@router.get("/sessions")
+async def get_all_sessions(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    manager_only: bool = Query(False, description="Show only sessions with manager requests"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get all chat sessions for admin panel."""
+    from app.services.chat_logger import ChatLogger
+
+    chat_logger = ChatLogger(session)
+    sessions = await chat_logger.get_all_sessions(
+        limit=limit,
+        offset=offset,
+        manager_only=manager_only,
+    )
+    return {"sessions": sessions, "count": len(sessions)}
+
+
+@router.get("/sessions/{session_id}")
+async def get_session_details(
+    session_id: str,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get full conversation for a specific session."""
+    from app.services.chat_logger import ChatLogger
+
+    chat_logger = ChatLogger(session)
+    messages = await chat_logger.get_session_messages(session_id)
+    summary = await chat_logger.get_session_summary(session_id)
+
+    return {
+        "session": summary,
+        "messages": messages,
+    }
+
+
+@router.get("/sessions/{session_id}/summary")
+async def get_session_summary(
+    session_id: str,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get summary of a chat session."""
+    from app.services.chat_logger import ChatLogger
+
+    chat_logger = ChatLogger(session)
+    return await chat_logger.get_session_summary(session_id)
+
+
+@router.get("/manager-requests")
+async def get_manager_requests(
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get all sessions where manager was requested."""
+    from app.services.chat_logger import ChatLogger
+
+    chat_logger = ChatLogger(session)
+    sessions = await chat_logger.get_all_sessions(
+        limit=limit,
+        manager_only=True,
+    )
+    return {"manager_requests": sessions, "count": len(sessions)}
+
+
+@router.get("/stats")
+async def get_admin_stats(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get statistics for admin dashboard."""
+    from sqlalchemy import select, func
+    from app.db.models import ChatSession, ChatMessage, Product
+
+    # Count total sessions
+    sessions_count = await session.execute(
+        select(func.count(ChatSession.id))
+    )
+    total_sessions = sessions_count.scalar_one()
+
+    # Count total messages
+    messages_count = await session.execute(
+        select(func.count(ChatMessage.id))
+    )
+    total_messages = messages_count.scalar_one()
+
+    # Count products
+    products_count = await session.execute(
+        select(func.count(Product.id))
+    )
+    total_products = products_count.scalar_one()
+
+    # Count manager requests
+    manager_count = await session.execute(
+        select(func.count(ChatMessage.id))
+        .where(ChatMessage.intent == "call_manager")
+    )
+    total_manager_requests = manager_count.scalar_one()
+
+    # Get intent distribution
+    intent_dist = await session.execute(
+        select(ChatMessage.intent, func.count(ChatMessage.id))
+        .where(ChatMessage.intent.isnot(None))
+        .group_by(ChatMessage.intent)
+        .order_by(func.count(ChatMessage.id).desc())
+        .limit(10)
+    )
+
+    return {
+        "total_sessions": total_sessions,
+        "total_messages": total_messages,
+        "total_products": total_products,
+        "total_manager_requests": total_manager_requests,
+        "intent_distribution": [
+            {"intent": row[0], "count": row[1]}
+            for row in intent_dist.all()
+        ],
+    }

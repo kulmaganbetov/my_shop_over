@@ -106,8 +106,20 @@ class IntentRouter:
                 return await self._handle_pc_build(params, user_message, session_id, chat_history)
             elif intent == Intent.COMPONENT_REPLACE:
                 return await self._handle_component_replace(params, user_message, session_id, chat_history)
+            elif intent == Intent.SELECT_ALTERNATIVE:
+                return await self._handle_select_alternative(params, user_message, session_id, chat_history)
+            elif intent == Intent.ADD_PERIPHERAL:
+                return await self._handle_add_peripheral(params, user_message, session_id, chat_history)
             elif intent == Intent.PRODUCT_SEARCH:
                 return await self._handle_product_search(params, user_message, session_id, chat_history)
+            elif intent == Intent.SHOW_SPECS:
+                return await self._handle_show_specs(params, user_message, session_id, chat_history)
+            elif intent == Intent.FILTER_PRICE:
+                return await self._handle_filter_price(params, user_message, session_id, chat_history)
+            elif intent == Intent.DELIVERY_INFO:
+                return await self._handle_delivery_info(session_id)
+            elif intent == Intent.CALL_MANAGER:
+                return await self._handle_call_manager(params, session_id)
             elif intent == Intent.FAQ:
                 return await self._handle_faq(params, user_message, session_id)
             else:
@@ -197,6 +209,15 @@ class IntentRouter:
 
         alternatives_data = [alt.model_dump() for alt in alternatives]
 
+        # Store alternatives for later selection
+        await self.chat_repo.update_session_context(
+            session_id,
+            {
+                "last_alternatives": alternatives_data,
+                "last_component_type": component_type,
+            }
+        )
+
         # Generate response
         response_text = await self.llm_service.generate_component_replace_response(
             component_type=component_type,
@@ -207,8 +228,8 @@ class IntentRouter:
         )
 
         suggestions = [
-            "Выбрать первый вариант",
-            "Показать ещё варианты",
+            "Выбрать первый",
+            "Выбрать второй",
             "Заменить другой компонент",
         ]
 
@@ -307,18 +328,336 @@ class IntentRouter:
             suggestions=suggestions,
         )
 
+    async def _handle_select_alternative(
+        self,
+        params: dict,
+        user_message: str,
+        session_id: str,
+        chat_history: str = "",
+    ) -> ChatResponse:
+        """Handle selecting an alternative component."""
+        selection = params.get("selection", 1) - 1  # Convert to 0-indexed
+
+        # Get session context
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        if not chat_session or not chat_session.context:
+            return ChatResponse(
+                message="Нет доступных вариантов для выбора. Сначала соберите ПК.",
+                intent=Intent.SELECT_ALTERNATIVE,
+                session_id=session_id,
+                suggestions=["Собрать игровой ПК"],
+            )
+
+        context = chat_session.context
+        alternatives = context.get("last_alternatives", [])
+        component_type = context.get("last_component_type", "")
+        current_build = context.get("current_build", {})
+
+        if not alternatives or selection >= len(alternatives):
+            return ChatResponse(
+                message="Неверный номер варианта. Попробуйте ещё раз.",
+                intent=Intent.SELECT_ALTERNATIVE,
+                session_id=session_id,
+            )
+
+        # Update the build with selected component
+        selected = alternatives[selection]
+        if current_build.get("build"):
+            current_build["build"][component_type] = selected
+            # Recalculate total price
+            total = sum(
+                (c.get("discount_price") or c.get("price") or 0)
+                for c in current_build["build"].values()
+                if c
+            )
+            current_build["total_price"] = total
+
+        await self.chat_repo.update_session_context(
+            session_id,
+            {"current_build": current_build}
+        )
+
+        name = selected.get("name", "компонент")
+        price = selected.get("discount_price") or selected.get("price", 0)
+
+        return ChatResponse(
+            message=f"Отлично! Выбран: {name}\nЦена картой: {price:,.0f} ₸\n\nОбновлённая сборка сохранена.",
+            intent=Intent.SELECT_ALTERNATIVE,
+            session_id=session_id,
+            data=current_build,
+            suggestions=[
+                "Показать сборку",
+                "Заменить другой компонент",
+                "Добавить периферию",
+            ],
+        )
+
+    async def _handle_add_peripheral(
+        self,
+        params: dict,
+        user_message: str,
+        session_id: str,
+        chat_history: str = "",
+    ) -> ChatResponse:
+        """Handle adding peripherals (monitor, mouse, keyboard, etc.)."""
+        peripheral_type = params.get("peripheral_type", "mouse")
+        budget = params.get("budget")
+
+        # Map peripheral types to categories
+        peripheral_categories = {
+            "monitor": ("Мониторы", ["Мониторы"]),
+            "mouse": ("Мыши", ["Мыши"]),
+            "keyboard": ("Клавиатуры", ["Клавиатуры"]),
+            "headset": ("Гарнитуры", ["Гарнитуры", "Наушники"]),
+            "mousepad": ("Коврики для мыши", ["Коврики"]),
+            "webcam": ("Веб-камеры", ["Веб-камеры"]),
+        }
+
+        category_config = peripheral_categories.get(peripheral_type, ("Мыши", ["Мыши"]))
+        category_name, search_keywords = category_config
+
+        # Search for peripherals
+        from app.db.repositories import ProductRepository
+        product_repo = ProductRepository(self.session)
+
+        products = await product_repo.get_by_component_type(
+            component_type=category_name,
+            max_price=budget,
+            in_stock_only=True,
+            limit=5,
+            search_keywords=search_keywords,
+        )
+
+        if not products:
+            return ChatResponse(
+                message=f"К сожалению, {category_name.lower()} не найдены в наличии.",
+                intent=Intent.ADD_PERIPHERAL,
+                session_id=session_id,
+                suggestions=["Показать другие аксессуары", "Вернуться к сборке"],
+            )
+
+        from app.schemas.common import ProductSchema
+        products_data = [ProductSchema.model_validate(p).model_dump() for p in products]
+
+        # Store for selection
+        await self.chat_repo.update_session_context(
+            session_id,
+            {"last_peripherals": products_data, "last_peripheral_type": peripheral_type}
+        )
+
+        # Format response
+        lines = [f"Вот {category_name.lower()} в наличии:\n"]
+        for i, p in enumerate(products_data, 1):
+            price = p.get("price", 0)
+            discount = p.get("discount_price", 0)
+            lines.append(f"{i}. {p['name'][:60]}")
+            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+
+        return ChatResponse(
+            message="\n".join(lines),
+            intent=Intent.ADD_PERIPHERAL,
+            session_id=session_id,
+            data={"peripherals": products_data},
+            suggestions=[
+                "Выбрать первый",
+                "Показать мониторы",
+                "Показать клавиатуры",
+            ],
+        )
+
+    async def _handle_show_specs(
+        self,
+        params: dict,
+        user_message: str,
+        session_id: str,
+        chat_history: str = "",
+    ) -> ChatResponse:
+        """Handle showing product specifications."""
+        # Get last products from context
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        if not chat_session or not chat_session.context:
+            return ChatResponse(
+                message="Сначала выберите товар для просмотра характеристик.",
+                intent=Intent.SHOW_SPECS,
+                session_id=session_id,
+            )
+
+        context = chat_session.context
+        current_build = context.get("current_build", {})
+
+        if not current_build.get("build"):
+            return ChatResponse(
+                message="Нет сборки для показа. Соберите ПК сначала.",
+                intent=Intent.SHOW_SPECS,
+                session_id=session_id,
+                suggestions=["Собрать игровой ПК"],
+            )
+
+        # Show specs for all components
+        lines = ["Характеристики сборки:\n"]
+        for comp_type, comp in current_build["build"].items():
+            if comp:
+                specs = comp.get("specifications", {})
+                lines.append(f"**{comp_type.upper()}**: {comp.get('name', '')[:50]}")
+                if specs:
+                    for key, val in specs.items():
+                        lines.append(f"  • {key}: {val}")
+                lines.append("")
+
+        return ChatResponse(
+            message="\n".join(lines),
+            intent=Intent.SHOW_SPECS,
+            session_id=session_id,
+            suggestions=["Заменить компонент", "Информация о доставке"],
+        )
+
+    async def _handle_filter_price(
+        self,
+        params: dict,
+        user_message: str,
+        session_id: str,
+        chat_history: str = "",
+    ) -> ChatResponse:
+        """Handle price filtering."""
+        min_price = params.get("min_price")
+        max_price = params.get("max_price")
+
+        # Get last search context
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        last_query = ""
+        if chat_session and chat_session.context:
+            last_query = chat_session.context.get("last_search_query", "")
+
+        if not last_query:
+            return ChatResponse(
+                message=f"Буду искать товары в ценовом диапазоне: "
+                        f"{min_price or 0:,.0f} - {max_price or '∞':} ₸\n"
+                        f"Укажите, что именно ищете.",
+                intent=Intent.FILTER_PRICE,
+                session_id=session_id,
+            )
+
+        # Re-run search with price filter
+        from app.schemas.llm import ProductSearchParams
+        search_params = ProductSearchParams(
+            query=last_query,
+            min_price=min_price,
+            max_price=max_price,
+            limit=5,
+        )
+        search_result = await self.product_search_service.search(search_params)
+
+        products_data = [p.model_dump() for p in search_result.products]
+        response_text = await self.llm_service.generate_product_search_response(
+            query=last_query,
+            results=products_data,
+            user_message=user_message,
+            chat_history=chat_history,
+        )
+
+        return ChatResponse(
+            message=response_text,
+            intent=Intent.FILTER_PRICE,
+            session_id=session_id,
+            data=search_result.model_dump(),
+            suggestions=["Другой ценовой диапазон", "Показать характеристики"],
+        )
+
+    async def _handle_delivery_info(self, session_id: str) -> ChatResponse:
+        """Handle delivery information request."""
+        delivery_text = """📦 **Доставка по Казахстану**
+
+**Алматы:**
+• Бесплатная доставка при заказе от 50,000 ₸
+• Доставка 1-2 рабочих дня
+• Самовывоз из магазина
+
+**Другие города:**
+• Доставка через Казпочту или курьерские службы
+• Срок: 3-7 рабочих дней
+• Стоимость зависит от веса и города
+
+**Оплата:**
+• Картой онлайн
+• Рассрочка 0-0-12 от Kaspi
+• Наличными при получении
+
+Нужна дополнительная информация?"""
+
+        return ChatResponse(
+            message=delivery_text,
+            intent=Intent.DELIVERY_INFO,
+            session_id=session_id,
+            suggestions=[
+                "Условия гарантии",
+                "Способы оплаты",
+                "Вызвать менеджера",
+            ],
+        )
+
+    async def _handle_call_manager(
+        self,
+        params: dict,
+        session_id: str,
+    ) -> ChatResponse:
+        """Handle manager call request with confirmation."""
+        reason = params.get("reason", "запрос клиента")
+
+        # Check if this is a confirmation
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        awaiting_confirmation = False
+        if chat_session and chat_session.context:
+            awaiting_confirmation = chat_session.context.get("awaiting_manager_confirmation", False)
+
+        if not awaiting_confirmation:
+            # First request - ask for confirmation
+            await self.chat_repo.update_session_context(
+                session_id,
+                {"awaiting_manager_confirmation": True, "manager_reason": reason}
+            )
+            return ChatResponse(
+                message="Вы уверены, что хотите связаться с менеджером? "
+                        "Менеджер свяжется с вами в ближайшее время.\n\n"
+                        "Подтвердите: напишите 'Да' или нажмите кнопку.",
+                intent=Intent.CALL_MANAGER,
+                session_id=session_id,
+                suggestions=["Да, вызвать менеджера", "Нет, продолжить с ботом"],
+            )
+        else:
+            # Confirmation received
+            await self.chat_repo.update_session_context(
+                session_id,
+                {
+                    "awaiting_manager_confirmation": False,
+                    "manager_requested": True,
+                    "manager_request_reason": reason,
+                }
+            )
+            logger.warning(f"[MANAGER_REQUEST] session={session_id} reason={reason}")
+
+            return ChatResponse(
+                message="✅ Заявка принята!\n\n"
+                        "Менеджер свяжется с вами в ближайшее время по указанным контактам.\n"
+                        "Время работы: Пн-Пт 9:00-18:00\n\n"
+                        "Пока вы можете продолжить пользоваться ботом.",
+                intent=Intent.CALL_MANAGER,
+                session_id=session_id,
+                suggestions=["Собрать ПК", "Найти товар"],
+            )
+
     async def _handle_error(
         self,
         session_id: str,
         error: str,
     ) -> ChatResponse:
         """Handle errors gracefully."""
+        logger.error(f"[SYSTEM_ERROR] session={session_id} error={error}")
         return ChatResponse(
-            message="Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз.",
+            message="Извините, произошла ошибка. Попробуйте ещё раз или вызовите менеджера.",
             intent=Intent.UNKNOWN,
             session_id=session_id,
             suggestions=[
                 "Попробовать снова",
-                "Связаться с поддержкой",
+                "Вызвать менеджера",
             ],
         )
