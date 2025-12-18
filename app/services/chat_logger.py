@@ -154,15 +154,16 @@ class ChatLogger:
             )
             user_msgs = list(msgs_result.scalars().all())
 
-            # Check for manager request
+            # Check for manager request - use first() instead of scalar_one_or_none to handle multiple rows
             manager_result = await self.session.execute(
-                select(ChatMessage)
+                select(ChatMessage.id)
                 .where(
                     ChatMessage.session_id == row.session_id,
                     ChatMessage.intent == "call_manager"
                 )
+                .limit(1)
             )
-            has_manager_request = manager_result.scalar_one_or_none() is not None
+            has_manager_request = manager_result.scalar() is not None
 
             if manager_only and not has_manager_request:
                 continue

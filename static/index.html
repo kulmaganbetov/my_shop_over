@@ -692,23 +692,10 @@
 
             const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-            let extraContent = '';
-
-            // Add suggestions if available
-            if (data && data.suggestions && data.suggestions.length > 0) {
-                extraContent += '<div class="suggestions">';
-                data.suggestions.forEach(suggestion => {
-                    const btnClass = suggestion.toLowerCase().includes('менеджер') ? 'manager-btn' : 'suggestion-btn';
-                    extraContent += `<button class="${btnClass}" onclick="sendSuggestion('${escapeHtml(suggestion)}')">${escapeHtml(suggestion)}</button>`;
-                });
-                extraContent += '</div>';
-            }
-
             messageDiv.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
                 <div>
                     <div class="message-content">${formatMessage(text)}</div>
-                    ${extraContent}
                     <div class="message-time">${time}</div>
                 </div>
             `;

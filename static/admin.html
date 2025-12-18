@@ -9,7 +9,6 @@
         :root {
             --primary: #6366f1;
             --primary-dark: #4f46e5;
-            --primary-light: #818cf8;
             --bg-main: #f8fafc;
             --bg-card: #ffffff;
             --bg-sidebar: #1e293b;
@@ -25,17 +24,132 @@
             --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
             background: var(--bg-main);
             color: var(--text-primary);
             min-height: 100vh;
+        }
+
+        /* Login Page */
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+
+        .login-logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary), var(--accent-blue));
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+
+        .login-title {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .login-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 32px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        /* Admin Layout */
+        .admin-layout {
+            display: none;
+        }
+
+        .admin-layout.active {
             display: flex;
         }
 
@@ -45,8 +159,6 @@
             background: var(--bg-sidebar);
             color: var(--text-light);
             padding: 24px 16px;
-            display: flex;
-            flex-direction: column;
             position: fixed;
             height: 100vh;
             overflow-y: auto;
@@ -63,21 +175,16 @@
         .logo-icon {
             width: 40px;
             height: 40px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+            background: linear-gradient(135deg, var(--primary), var(--accent-blue));
             border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
-        .logo-text {
-            font-size: 18px;
-            font-weight: 600;
-        }
+        .logo-text { font-size: 18px; font-weight: 600; }
 
-        .nav-section {
-            margin-bottom: 24px;
-        }
+        .nav-section { margin-bottom: 24px; }
 
         .nav-title {
             font-size: 11px;
@@ -111,10 +218,7 @@
             color: white;
         }
 
-        .nav-link svg {
-            width: 20px;
-            height: 20px;
-        }
+        .nav-link svg { width: 20px; height: 20px; }
 
         .nav-badge {
             margin-left: auto;
@@ -125,6 +229,15 @@
             border-radius: 10px;
             font-weight: 600;
         }
+
+        .user-info {
+            padding: 16px 12px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: auto;
+        }
+
+        .user-name { font-size: 14px; font-weight: 500; }
+        .user-role { font-size: 12px; color: var(--text-muted); }
 
         /* Main Content */
         .main-content {
@@ -140,40 +253,8 @@
             margin-bottom: 24px;
         }
 
-        .page-title {
-            font-size: 24px;
-            font-weight: 600;
-        }
-
-        .page-subtitle {
-            font-size: 14px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
-
-        .refresh-btn {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 16px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .refresh-btn:hover {
-            background: var(--primary-dark);
-        }
-
-        .refresh-btn svg {
-            width: 18px;
-            height: 18px;
-        }
+        .page-title { font-size: 24px; font-weight: 600; }
+        .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
 
         /* Stats Grid */
         .stats-grid {
@@ -188,14 +269,6 @@
             border-radius: 12px;
             padding: 20px;
             border: 1px solid var(--border);
-            box-shadow: var(--shadow);
-        }
-
-        .stat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 12px;
         }
 
         .stat-icon {
@@ -205,37 +278,25 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            margin-bottom: 12px;
         }
 
         .stat-icon.blue { background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); }
         .stat-icon.green { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); }
         .stat-icon.yellow { background: rgba(245, 158, 11, 0.1); color: var(--accent-yellow); }
         .stat-icon.red { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); }
+        .stat-icon svg { width: 20px; height: 20px; }
 
-        .stat-icon svg {
-            width: 20px;
-            height: 20px;
-        }
+        .stat-value { font-size: 28px; font-weight: 700; }
+        .stat-label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
 
-        .stat-value {
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        .stat-label {
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
-
-        /* Sessions Table */
+        /* Table */
         .table-card {
             background: var(--bg-card);
             border-radius: 12px;
             border: 1px solid var(--border);
-            box-shadow: var(--shadow);
             overflow: hidden;
+            margin-bottom: 24px;
         }
 
         .table-header {
@@ -246,40 +307,9 @@
             border-bottom: 1px solid var(--border);
         }
 
-        .table-title {
-            font-size: 16px;
-            font-weight: 600;
-        }
+        .table-title { font-size: 16px; font-weight: 600; }
 
-        .table-tabs {
-            display: flex;
-            gap: 8px;
-        }
-
-        .tab-btn {
-            padding: 8px 16px;
-            border: 1px solid var(--border);
-            background: transparent;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .tab-btn:hover {
-            background: var(--bg-main);
-        }
-
-        .tab-btn.active {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+        table { width: 100%; border-collapse: collapse; }
 
         th, td {
             text-align: left;
@@ -292,93 +322,44 @@
             font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
-            letter-spacing: 0.5px;
             background: var(--bg-main);
         }
 
-        td {
-            font-size: 14px;
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        tr:hover td {
-            background: var(--bg-main);
-        }
-
-        .session-id {
-            font-family: monospace;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-
-        .message-preview {
-            max-width: 300px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
+        td { font-size: 14px; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: var(--bg-main); }
 
         .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
+            display: inline-block;
             padding: 4px 10px;
             border-radius: 20px;
             font-size: 12px;
             font-weight: 500;
         }
 
-        .badge.manager {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--accent-red);
-        }
+        .badge.admin { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+        .badge.manager { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); }
+        .badge.active { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); }
+        .badge.inactive { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); }
 
-        .badge.normal {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--accent-green);
-        }
-
-        .view-btn {
-            padding: 6px 12px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .view-btn:hover {
-            background: var(--primary-dark);
-        }
-
-        /* Session Detail Modal */
+        /* Modal */
         .modal-overlay {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0, 0, 0, 0.5);
             z-index: 1000;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
         }
 
-        .modal-overlay.active {
-            display: flex;
-        }
+        .modal-overlay.active { display: flex; }
 
         .modal {
             background: var(--bg-card);
             border-radius: 16px;
             width: 90%;
-            max-width: 800px;
+            max-width: 600px;
             max-height: 80vh;
             overflow: hidden;
             display: flex;
@@ -393,26 +374,14 @@
             border-bottom: 1px solid var(--border);
         }
 
-        .modal-title {
-            font-size: 18px;
-            font-weight: 600;
-        }
+        .modal-title { font-size: 18px; font-weight: 600; }
 
         .modal-close {
-            width: 32px;
-            height: 32px;
+            width: 32px; height: 32px;
             border: none;
             background: var(--bg-main);
             border-radius: 8px;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-        }
-
-        .modal-close:hover {
-            background: var(--border);
         }
 
         .modal-body {
@@ -421,82 +390,68 @@
             padding: 24px;
         }
 
+        /* Chat Log */
         .chat-log {
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 12px;
         }
 
-        .log-message {
+        .chat-msg {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             max-width: 80%;
         }
 
-        .log-message.user {
-            align-self: flex-end;
-            flex-direction: row-reverse;
-        }
+        .chat-msg.user { align-self: flex-end; flex-direction: row-reverse; }
+        .chat-msg.manager { align-self: flex-end; flex-direction: row-reverse; }
 
-        .log-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            font-size: 12px;
-        }
-
-        .log-message.assistant .log-avatar {
-            background: var(--primary);
-            color: white;
-        }
-
-        .log-message.user .log-avatar {
-            background: var(--border);
-            color: var(--text-secondary);
-        }
-
-        .log-content {
-            padding: 12px 16px;
+        .chat-bubble {
+            padding: 10px 14px;
             border-radius: 12px;
             font-size: 14px;
-            line-height: 1.5;
         }
 
-        .log-message.assistant .log-content {
+        .chat-msg.assistant .chat-bubble {
             background: var(--bg-main);
             border: 1px solid var(--border);
         }
 
-        .log-message.user .log-content {
+        .chat-msg.user .chat-bubble {
             background: var(--primary);
             color: white;
         }
 
-        .log-meta {
+        .chat-msg.manager .chat-bubble {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .chat-meta {
             font-size: 11px;
             color: var(--text-muted);
             margin-top: 4px;
         }
 
-        .log-message.user .log-meta {
-            text-align: right;
+        /* Manager Reply Input */
+        .reply-input {
+            display: flex;
+            gap: 12px;
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
         }
 
-        .intent-tag {
-            display: inline-block;
-            padding: 2px 8px;
-            background: rgba(99, 102, 241, 0.1);
-            color: var(--primary);
-            border-radius: 4px;
-            font-size: 11px;
-            margin-left: 8px;
+        .reply-input input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
         }
 
-        /* Loading */
+        .page { display: none; }
+        .page.active { display: block; }
+
         .loading {
             display: flex;
             justify-content: center;
@@ -504,456 +459,549 @@
         }
 
         .spinner {
-            width: 32px;
-            height: 32px;
+            width: 32px; height: 32px;
             border: 3px solid var(--border);
             border-top-color: var(--primary);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* Empty State */
         .empty-state {
             text-align: center;
-            padding: 60px 20px;
+            padding: 40px;
             color: var(--text-secondary);
-        }
-
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 16px;
-            opacity: 0.5;
-        }
-
-        /* Responsive */
-        @media (max-width: 900px) {
-            .sidebar {
-                width: 70px;
-                padding: 16px 8px;
-            }
-            .logo-text, .nav-title, .nav-link span {
-                display: none;
-            }
-            .nav-link {
-                justify-content: center;
-                padding: 12px;
-            }
-            .main-content {
-                margin-left: 70px;
-            }
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="logo">
-            <div class="logo-icon">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <!-- Login Page -->
+    <div class="login-page" id="login-page">
+        <div class="login-card">
+            <div class="login-logo">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
                     <path d="M12 2L2 7l10 5 10-5-10-5z"/>
                     <path d="M2 17l10 5 10-5"/>
                     <path d="M2 12l10 5 10-5"/>
                 </svg>
             </div>
-            <span class="logo-text">Over-Shop Admin</span>
-        </div>
+            <h1 class="login-title">Админ-панель</h1>
+            <p class="login-subtitle">Over-Shop.kz</p>
 
-        <nav class="nav-section">
-            <div class="nav-title">Главное</div>
-            <a class="nav-link active" onclick="showPage('dashboard')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="7"/>
-                    <rect x="14" y="3" width="7" height="7"/>
-                    <rect x="14" y="14" width="7" height="7"/>
-                    <rect x="3" y="14" width="7" height="7"/>
-                </svg>
-                <span>Дашборд</span>
-            </a>
-            <a class="nav-link" onclick="showPage('sessions')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-                <span>Сессии чата</span>
-            </a>
-            <a class="nav-link" onclick="showPage('manager')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                <span>Вызов менеджера</span>
-                <span class="nav-badge" id="manager-count">0</span>
-            </a>
-        </nav>
+            <div class="error-message" id="login-error"></div>
 
-        <nav class="nav-section">
-            <div class="nav-title">Управление</div>
-            <a class="nav-link" onclick="triggerSync('products')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                </svg>
-                <span>Синхр. товаров</span>
-            </a>
-            <a class="nav-link" onclick="triggerSync('embeddings')">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <path d="M12 6v6l4 2"/>
-                </svg>
-                <span>Обновить эмбеддинги</span>
-            </a>
-        </nav>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="main-content">
-        <!-- Dashboard Page -->
-        <div id="page-dashboard">
-            <div class="page-header">
-                <div>
-                    <h1 class="page-title">Дашборд</h1>
-                    <p class="page-subtitle">Обзор работы AI-ассистента</p>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label class="form-label">Логин</label>
+                    <input type="text" class="form-input" id="login-username" required>
                 </div>
-                <button class="refresh-btn" onclick="loadStats()">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M23 4v6h-6"/>
-                        <path d="M1 20v-6h6"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                <div class="form-group">
+                    <label class="form-label">Пароль</label>
+                    <input type="password" class="form-input" id="login-password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Войти</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Layout -->
+    <div class="admin-layout" id="admin-layout">
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
                     </svg>
-                    Обновить
-                </button>
+                </div>
+                <span class="logo-text">Over-Shop Admin</span>
             </div>
 
-            <div class="stats-grid" id="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon blue">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                            </svg>
-                        </div>
-                    </div>
-                    <div class="stat-value" id="stat-sessions">-</div>
-                    <div class="stat-label">Всего сессий</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon green">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-                            </svg>
-                        </div>
-                    </div>
-                    <div class="stat-value" id="stat-messages">-</div>
-                    <div class="stat-label">Всего сообщений</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon yellow">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                            </svg>
-                        </div>
-                    </div>
-                    <div class="stat-value" id="stat-products">-</div>
-                    <div class="stat-label">Товаров в базе</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon red">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                            </svg>
-                        </div>
-                    </div>
-                    <div class="stat-value" id="stat-manager">-</div>
-                    <div class="stat-label">Вызовов менеджера</div>
-                </div>
-            </div>
-
-            <div class="table-card">
-                <div class="table-header">
-                    <h3 class="table-title">Распределение интентов</h3>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Интент</th>
-                            <th>Количество</th>
-                        </tr>
-                    </thead>
-                    <tbody id="intents-table">
-                        <tr><td colspan="2" class="loading"><div class="spinner"></div></td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Sessions Page -->
-        <div id="page-sessions" style="display: none;">
-            <div class="page-header">
-                <div>
-                    <h1 class="page-title">Сессии чата</h1>
-                    <p class="page-subtitle">История диалогов с пользователями</p>
-                </div>
-                <button class="refresh-btn" onclick="loadSessions()">
+            <nav class="nav-section">
+                <div class="nav-title">Главное</div>
+                <a class="nav-link active" onclick="showPage('dashboard')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M23 4v6h-6"/>
-                        <path d="M1 20v-6h6"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
                     </svg>
-                    Обновить
-                </button>
-            </div>
-
-            <div class="table-card">
-                <div class="table-header">
-                    <h3 class="table-title">Все сессии</h3>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID сессии</th>
-                            <th>Первое сообщение</th>
-                            <th>Сообщений</th>
-                            <th>Время</th>
-                            <th>Статус</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sessions-table">
-                        <tr><td colspan="6" class="loading"><div class="spinner"></div></td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Manager Requests Page -->
-        <div id="page-manager" style="display: none;">
-            <div class="page-header">
-                <div>
-                    <h1 class="page-title">Запросы менеджера</h1>
-                    <p class="page-subtitle">Сессии с запросом на связь с человеком</p>
-                </div>
-                <button class="refresh-btn" onclick="loadManagerRequests()">
+                    <span>Дашборд</span>
+                </a>
+                <a class="nav-link" onclick="showPage('sessions')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M23 4v6h-6"/>
-                        <path d="M1 20v-6h6"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                     </svg>
-                    Обновить
-                </button>
+                    <span>Сессии чата</span>
+                </a>
+                <a class="nav-link" onclick="showPage('manager-requests')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                    </svg>
+                    <span>Вызов менеджера</span>
+                    <span class="nav-badge" id="manager-badge">0</span>
+                </a>
+            </nav>
+
+            <nav class="nav-section" id="admin-nav" style="display:none;">
+                <div class="nav-title">Управление</div>
+                <a class="nav-link" onclick="showPage('users')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                    <span>Пользователи</span>
+                </a>
+            </nav>
+
+            <div class="user-info">
+                <div class="user-name" id="current-user-name">-</div>
+                <div class="user-role" id="current-user-role">-</div>
+                <button class="btn btn-sm" style="margin-top:8px;background:rgba(255,255,255,0.1);color:white;" onclick="handleLogout()">Выйти</button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <!-- Dashboard Page -->
+            <div class="page active" id="page-dashboard">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Дашборд</h1>
+                        <p class="page-subtitle">Обзор работы AI-ассистента</p>
+                    </div>
+                </div>
+
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                        <div class="stat-value" id="stat-sessions">-</div>
+                        <div class="stat-label">Всего сессий</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+                        <div class="stat-value" id="stat-messages">-</div>
+                        <div class="stat-label">Всего сообщений</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon yellow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+                        <div class="stat-value" id="stat-products">-</div>
+                        <div class="stat-label">Товаров в базе</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+                        <div class="stat-value" id="stat-manager">-</div>
+                        <div class="stat-label">Вызовов менеджера</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="table-card">
-                <div class="table-header">
-                    <h3 class="table-title">Ожидают ответа</h3>
+            <!-- Sessions Page -->
+            <div class="page" id="page-sessions">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Сессии чата</h1>
+                        <p class="page-subtitle">История диалогов с пользователями</p>
+                    </div>
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID сессии</th>
-                            <th>Первое сообщение</th>
-                            <th>Сообщений</th>
-                            <th>Время</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody id="manager-table">
-                        <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
-                    </tbody>
-                </table>
+
+                <div class="table-card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID сессии</th>
+                                <th>Первое сообщение</th>
+                                <th>Сообщений</th>
+                                <th>Время</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessions-table">
+                            <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
-    </main>
+
+            <!-- Manager Requests Page -->
+            <div class="page" id="page-manager-requests">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Запросы менеджера</h1>
+                        <p class="page-subtitle">Сессии с запросом на связь с человеком</p>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID сессии</th>
+                                <th>Первое сообщение</th>
+                                <th>Сообщений</th>
+                                <th>Время</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="manager-table">
+                            <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Users Page -->
+            <div class="page" id="page-users">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Пользователи</h1>
+                        <p class="page-subtitle">Управление администраторами и менеджерами</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="showAddUserModal()">Добавить пользователя</button>
+                </div>
+
+                <div class="table-card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Имя</th>
+                                <th>Логин</th>
+                                <th>Роль</th>
+                                <th>Статус</th>
+                                <th>Последний вход</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-table">
+                            <tr><td colspan="6" class="loading"><div class="spinner"></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
 
     <!-- Session Detail Modal -->
     <div class="modal-overlay" id="session-modal">
-        <div class="modal">
+        <div class="modal" style="max-width:800px;">
             <div class="modal-header">
                 <h3 class="modal-title">Диалог сессии</h3>
-                <button class="modal-close" onclick="closeModal()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 6L6 18M6 6l12 12"/>
-                    </svg>
-                </button>
+                <button class="modal-close" onclick="closeModal('session-modal')">x</button>
             </div>
             <div class="modal-body">
-                <div class="chat-log" id="chat-log">
-                    <div class="loading"><div class="spinner"></div></div>
-                </div>
+                <div class="chat-log" id="chat-log"></div>
+            </div>
+            <div class="reply-input">
+                <input type="text" id="manager-reply-input" placeholder="Ответ менеджера...">
+                <button class="btn btn-primary" onclick="sendManagerReply()">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div class="modal-overlay" id="add-user-modal">
+        <div class="modal" style="max-width:400px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Добавить пользователя</h3>
+                <button class="modal-close" onclick="closeModal('add-user-modal')">x</button>
+            </div>
+            <div class="modal-body">
+                <form onsubmit="handleCreateUser(event)">
+                    <div class="form-group">
+                        <label class="form-label">Логин</label>
+                        <input type="text" class="form-input" id="new-username" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-input" id="new-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Полное имя</label>
+                        <input type="text" class="form-input" id="new-fullname">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Роль</label>
+                        <select class="form-input" id="new-role">
+                            <option value="manager">Менеджер</option>
+                            <option value="admin">Администратор</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Создать</button>
+                </form>
             </div>
         </div>
     </div>
 
     <script>
         const API_URL = window.location.origin + '/api/v1/admin';
-        let currentPage = 'dashboard';
+        let currentUser = null;
+        let currentSessionId = null;
 
-        // Navigation
+        // Check auth on load
+        checkAuth();
+
+        async function checkAuth() {
+            try {
+                const res = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
+                if (res.ok) {
+                    currentUser = await res.json();
+                    showAdmin();
+                } else {
+                    showLogin();
+                }
+            } catch (e) {
+                showLogin();
+            }
+        }
+
+        function showLogin() {
+            document.getElementById('login-page').style.display = 'flex';
+            document.getElementById('admin-layout').classList.remove('active');
+        }
+
+        function showAdmin() {
+            document.getElementById('login-page').style.display = 'none';
+            document.getElementById('admin-layout').classList.add('active');
+            document.getElementById('current-user-name').textContent = currentUser.full_name || currentUser.username;
+            document.getElementById('current-user-role').textContent = currentUser.role === 'admin' ? 'Администратор' : 'Менеджер';
+
+            if (currentUser.role === 'admin') {
+                document.getElementById('admin-nav').style.display = 'block';
+            }
+
+            loadStats();
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    currentUser = data.user;
+                    showAdmin();
+                } else {
+                    const err = await res.json();
+                    showError('login-error', err.detail || 'Ошибка входа');
+                }
+            } catch (e) {
+                showError('login-error', 'Ошибка подключения');
+            }
+        }
+
+        async function handleLogout() {
+            await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+            currentUser = null;
+            showLogin();
+        }
+
+        function showError(id, msg) {
+            const el = document.getElementById(id);
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 3000);
+        }
+
         function showPage(page) {
-            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
-            document.querySelectorAll('[id^="page-"]').forEach(p => p.style.display = 'none');
-
+            document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelector(`[onclick="showPage('${page}')"]`).classList.add('active');
-            document.getElementById(`page-${page}`).style.display = 'block';
-
-            currentPage = page;
+            document.getElementById(`page-${page}`).classList.add('active');
 
             if (page === 'dashboard') loadStats();
             if (page === 'sessions') loadSessions();
-            if (page === 'manager') loadManagerRequests();
+            if (page === 'manager-requests') loadManagerRequests();
+            if (page === 'users') loadUsers();
         }
 
-        // Load Statistics
         async function loadStats() {
             try {
-                const response = await fetch(`${API_URL}/stats`);
-                const data = await response.json();
-
+                const res = await fetch(`${API_URL}/stats`, { credentials: 'include' });
+                const data = await res.json();
                 document.getElementById('stat-sessions').textContent = data.total_sessions || 0;
                 document.getElementById('stat-messages').textContent = data.total_messages || 0;
                 document.getElementById('stat-products').textContent = data.total_products || 0;
                 document.getElementById('stat-manager').textContent = data.total_manager_requests || 0;
-                document.getElementById('manager-count').textContent = data.total_manager_requests || 0;
-
-                // Intents table
-                const intentsTable = document.getElementById('intents-table');
-                if (data.intent_distribution && data.intent_distribution.length > 0) {
-                    intentsTable.innerHTML = data.intent_distribution.map(item => `
-                        <tr>
-                            <td><span class="intent-tag">${item.intent}</span></td>
-                            <td>${item.count}</td>
-                        </tr>
-                    `).join('');
-                } else {
-                    intentsTable.innerHTML = '<tr><td colspan="2" class="empty-state">Нет данных</td></tr>';
-                }
-            } catch (error) {
-                console.error('Error loading stats:', error);
+                document.getElementById('manager-badge').textContent = data.total_manager_requests || 0;
+            } catch (e) {
+                console.error('Error loading stats:', e);
             }
         }
 
-        // Load Sessions
         async function loadSessions() {
             try {
-                const response = await fetch(`${API_URL}/sessions?limit=50`);
-                const data = await response.json();
-
-                const table = document.getElementById('sessions-table');
-                if (data.sessions && data.sessions.length > 0) {
-                    table.innerHTML = data.sessions.map(session => `
-                        <tr>
-                            <td class="session-id">${session.session_id.substring(0, 16)}...</td>
-                            <td class="message-preview">${escapeHtml(session.first_user_message || '-')}</td>
-                            <td>${session.message_count}</td>
-                            <td>${formatDate(session.last_message_time)}</td>
-                            <td>
-                                ${session.manager_requested
-                                    ? '<span class="badge manager">Менеджер</span>'
-                                    : '<span class="badge normal">Обычная</span>'}
-                            </td>
-                            <td>
-                                <button class="view-btn" onclick="viewSession('${session.session_id}')">Просмотр</button>
-                            </td>
-                        </tr>
-                    `).join('');
-                } else {
-                    table.innerHTML = '<tr><td colspan="6" class="empty-state">Нет сессий</td></tr>';
-                }
-            } catch (error) {
-                console.error('Error loading sessions:', error);
+                const res = await fetch(`${API_URL}/sessions?limit=50`, { credentials: 'include' });
+                const data = await res.json();
+                renderSessionsTable('sessions-table', data.sessions || []);
+            } catch (e) {
+                console.error('Error loading sessions:', e);
             }
         }
 
-        // Load Manager Requests
         async function loadManagerRequests() {
             try {
-                const response = await fetch(`${API_URL}/manager-requests?limit=50`);
-                const data = await response.json();
-
-                const table = document.getElementById('manager-table');
-                if (data.manager_requests && data.manager_requests.length > 0) {
-                    table.innerHTML = data.manager_requests.map(session => `
-                        <tr>
-                            <td class="session-id">${session.session_id.substring(0, 16)}...</td>
-                            <td class="message-preview">${escapeHtml(session.first_user_message || '-')}</td>
-                            <td>${session.message_count}</td>
-                            <td>${formatDate(session.last_message_time)}</td>
-                            <td>
-                                <button class="view-btn" onclick="viewSession('${session.session_id}')">Просмотр</button>
-                            </td>
-                        </tr>
-                    `).join('');
-                } else {
-                    table.innerHTML = '<tr><td colspan="5" class="empty-state">Нет запросов</td></tr>';
-                }
-            } catch (error) {
-                console.error('Error loading manager requests:', error);
+                const res = await fetch(`${API_URL}/manager-requests?limit=50`, { credentials: 'include' });
+                const data = await res.json();
+                renderSessionsTable('manager-table', data.manager_requests || []);
+            } catch (e) {
+                console.error('Error loading manager requests:', e);
             }
         }
 
-        // View Session Detail
+        function renderSessionsTable(tableId, sessions) {
+            const table = document.getElementById(tableId);
+            if (!sessions.length) {
+                table.innerHTML = '<tr><td colspan="5" class="empty-state">Нет данных</td></tr>';
+                return;
+            }
+            table.innerHTML = sessions.map(s => `
+                <tr>
+                    <td style="font-family:monospace;font-size:12px;">${(s.session_id || '').substring(0, 16)}...</td>
+                    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.first_user_message || '-')}</td>
+                    <td>${s.message_count || 0}</td>
+                    <td>${formatDate(s.last_message_time)}</td>
+                    <td><button class="btn btn-sm btn-primary" onclick="viewSession('${s.session_id}')">Просмотр</button></td>
+                </tr>
+            `).join('');
+        }
+
         async function viewSession(sessionId) {
+            currentSessionId = sessionId;
             document.getElementById('session-modal').classList.add('active');
             document.getElementById('chat-log').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
             try {
-                const response = await fetch(`${API_URL}/sessions/${sessionId}`);
-                const data = await response.json();
-
-                const chatLog = document.getElementById('chat-log');
-                if (data.messages && data.messages.length > 0) {
-                    chatLog.innerHTML = data.messages.map(msg => `
-                        <div class="log-message ${msg.role}">
-                            <div class="log-avatar">${msg.role === 'assistant' ? 'R' : 'U'}</div>
-                            <div>
-                                <div class="log-content">${escapeHtml(msg.content)}</div>
-                                <div class="log-meta">
-                                    ${formatDate(msg.created_at)}
-                                    ${msg.intent ? `<span class="intent-tag">${msg.intent}</span>` : ''}
-                                </div>
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
-                    chatLog.innerHTML = '<div class="empty-state">Нет сообщений</div>';
-                }
-            } catch (error) {
-                console.error('Error loading session:', error);
+                const res = await fetch(`${API_URL}/sessions/${sessionId}/messages`, { credentials: 'include' });
+                const data = await res.json();
+                renderChatLog(data.messages || []);
+            } catch (e) {
                 document.getElementById('chat-log').innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
             }
         }
 
-        function closeModal() {
-            document.getElementById('session-modal').classList.remove('active');
+        function renderChatLog(messages) {
+            const log = document.getElementById('chat-log');
+            if (!messages.length) {
+                log.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+                return;
+            }
+            log.innerHTML = messages.map(m => `
+                <div class="chat-msg ${m.role}">
+                    <div>
+                        <div class="chat-bubble">${escapeHtml(m.content)}</div>
+                        <div class="chat-meta">${formatDate(m.created_at)}</div>
+                    </div>
+                </div>
+            `).join('');
         }
 
-        // Trigger Sync
-        async function triggerSync(type) {
+        async function sendManagerReply() {
+            const input = document.getElementById('manager-reply-input');
+            const message = input.value.trim();
+            if (!message || !currentSessionId) return;
+
             try {
-                const endpoint = type === 'products' ? '/sync/products' : '/sync/embeddings';
-                const response = await fetch(`${API_URL}${endpoint}`, { method: 'POST' });
-                const data = await response.json();
-                alert(`Задача поставлена в очередь! ID: ${data.task_id}`);
-            } catch (error) {
-                console.error('Error triggering sync:', error);
-                alert('Ошибка запуска синхронизации');
+                await fetch(`${API_URL}/sessions/${currentSessionId}/reply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ message })
+                });
+                input.value = '';
+                viewSession(currentSessionId);
+            } catch (e) {
+                alert('Ошибка отправки');
             }
         }
 
-        // Helpers
-        function formatDate(dateStr) {
-            if (!dateStr) return '-';
-            const date = new Date(dateStr);
-            return date.toLocaleString('ru-RU', {
-                day: '2-digit',
-                month: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
+        async function loadUsers() {
+            try {
+                const res = await fetch(`${API_URL}/users`, { credentials: 'include' });
+                const data = await res.json();
+                renderUsersTable(data.users || []);
+            } catch (e) {
+                console.error('Error loading users:', e);
+            }
+        }
+
+        function renderUsersTable(users) {
+            const table = document.getElementById('users-table');
+            if (!users.length) {
+                table.innerHTML = '<tr><td colspan="6" class="empty-state">Нет пользователей</td></tr>';
+                return;
+            }
+            table.innerHTML = users.map(u => `
+                <tr>
+                    <td>${escapeHtml(u.full_name || '-')}</td>
+                    <td>${escapeHtml(u.username)}</td>
+                    <td><span class="badge ${u.role}">${u.role === 'admin' ? 'Админ' : 'Менеджер'}</span></td>
+                    <td><span class="badge ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Активен' : 'Неактивен'}</span></td>
+                    <td>${formatDate(u.last_login)}</td>
+                    <td>
+                        <button class="btn btn-sm" style="background:var(--border);" onclick="toggleUser(${u.id})">${u.is_active ? 'Отключить' : 'Включить'}</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})">Удалить</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function showAddUserModal() {
+            document.getElementById('add-user-modal').classList.add('active');
+        }
+
+        async function handleCreateUser(e) {
+            e.preventDefault();
+            try {
+                const res = await fetch(`${API_URL}/users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username: document.getElementById('new-username').value,
+                        password: document.getElementById('new-password').value,
+                        full_name: document.getElementById('new-fullname').value,
+                        role: document.getElementById('new-role').value
+                    })
+                });
+                if (res.ok) {
+                    closeModal('add-user-modal');
+                    loadUsers();
+                } else {
+                    const err = await res.json();
+                    alert(err.detail || 'Ошибка создания');
+                }
+            } catch (e) {
+                alert('Ошибка подключения');
+            }
+        }
+
+        async function toggleUser(id) {
+            await fetch(`${API_URL}/users/${id}/toggle`, { method: 'PUT', credentials: 'include' });
+            loadUsers();
+        }
+
+        async function deleteUser(id) {
+            if (!confirm('Удалить пользователя?')) return;
+            await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', credentials: 'include' });
+            loadUsers();
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function formatDate(str) {
+            if (!str) return '-';
+            return new Date(str).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
         }
 
         function escapeHtml(text) {
@@ -964,12 +1012,9 @@
         }
 
         // Close modal on outside click
-        document.getElementById('session-modal').addEventListener('click', function(e) {
-            if (e.target === this) closeModal();
+        document.querySelectorAll('.modal-overlay').forEach(m => {
+            m.addEventListener('click', e => { if (e.target === m) m.classList.remove('active'); });
         });
-
-        // Initial load
-        loadStats();
     </script>
 </body>
 </html>

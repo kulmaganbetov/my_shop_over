@@ -150,3 +150,38 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class AdminUser(Base):
+    """Admin and manager users for the admin panel."""
+
+    __tablename__ = "admin_users"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="manager")  # admin, manager
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ManagerChat(Base):
+    """Manager replies to customer sessions."""
+
+    __tablename__ = "manager_chats"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("chat_sessions.session_id", ondelete="CASCADE"), index=True
+    )
+    manager_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
