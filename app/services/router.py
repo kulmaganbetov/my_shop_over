@@ -42,6 +42,9 @@ class IntentRouter:
         # Ensure session exists first (creates if needed)
         await self.chat_repo.get_or_create_session(session_id)
 
+        # Get chat history for context
+        chat_history = await self._get_chat_history(session_id)
+
         # Store user message
         await self.chat_repo.add_message(
             session_id=session_id,
@@ -49,8 +52,8 @@ class IntentRouter:
             content=request.message,
         )
 
-        # Detect intent
-        intent_result = await self.llm_service.detect_intent(request.message)
+        # Detect intent with chat history context
+        intent_result = await self.llm_service.detect_intent(request.message, chat_history)
         logger.info(f"Detected intent: {intent_result.intent} with confidence {intent_result.confidence}")
 
         # Route to appropriate service
@@ -58,6 +61,7 @@ class IntentRouter:
             intent_result=intent_result,
             user_message=request.message,
             session_id=session_id,
+            chat_history=chat_history,
         )
 
         # Store assistant response
@@ -71,11 +75,27 @@ class IntentRouter:
 
         return response
 
+    async def _get_chat_history(self, session_id: str, limit: int = 6) -> str:
+        """Get formatted chat history for LLM context."""
+        messages = await self.chat_repo.get_session_messages(session_id, limit=limit)
+        if not messages:
+            return ""
+
+        history_lines = ["Recent chat history:"]
+        for msg in messages:
+            role = "User" if msg.role == "user" else "Assistant"
+            # Truncate long messages
+            content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+            history_lines.append(f"  {role}: {content}")
+        history_lines.append("")
+        return "\n".join(history_lines)
+
     async def _route_intent(
         self,
         intent_result: IntentDetectionResult,
         user_message: str,
         session_id: str,
+        chat_history: str = "",
     ) -> ChatResponse:
         """Route to the appropriate service based on intent."""
         intent = intent_result.intent
@@ -83,13 +103,13 @@ class IntentRouter:
 
         try:
             if intent == Intent.PC_BUILD:
-                return await self._handle_pc_build(params, user_message, session_id)
+                return await self._handle_pc_build(params, user_message, session_id, chat_history)
             elif intent == Intent.PRODUCT_SEARCH:
-                return await self._handle_product_search(params, user_message, session_id)
+                return await self._handle_product_search(params, user_message, session_id, chat_history)
             elif intent == Intent.FAQ:
                 return await self._handle_faq(params, user_message, session_id)
             else:
-                return await self._handle_general(user_message, session_id)
+                return await self._handle_general(user_message, session_id, chat_history)
         except Exception as e:
             logger.error(f"Error processing intent {intent}: {e}")
             return await self._handle_error(session_id, str(e))
@@ -99,6 +119,7 @@ class IntentRouter:
         params: dict,
         user_message: str,
         session_id: str,
+        chat_history: str = "",
     ) -> ChatResponse:
         """Handle PC build intent."""
         build_params = self.llm_service.parse_pc_build_params(params)
@@ -106,10 +127,11 @@ class IntentRouter:
         # Get build recommendation
         build_result = await self.pc_build_service.recommend_build(build_params)
 
-        # Generate response
+        # Generate response with chat history
         response_text = await self.llm_service.generate_pc_build_response(
             build_data=build_result.model_dump(),
             user_request=user_message,
+            chat_history=chat_history,
         )
 
         suggestions = [
@@ -131,6 +153,7 @@ class IntentRouter:
         params: dict,
         user_message: str,
         session_id: str,
+        chat_history: str = "",
     ) -> ChatResponse:
         """Handle product search intent."""
         search_params = self.llm_service.parse_product_search_params(params)
@@ -138,12 +161,13 @@ class IntentRouter:
         # Search products
         search_result = await self.product_search_service.search(search_params)
 
-        # Generate response
+        # Generate response with chat history
         products_data = [p.model_dump() for p in search_result.products]
         response_text = await self.llm_service.generate_product_search_response(
             query=search_params.query,
             results=products_data,
             user_message=user_message,
+            chat_history=chat_history,
         )
 
         suggestions = [
@@ -193,9 +217,10 @@ class IntentRouter:
         self,
         user_message: str,
         session_id: str,
+        chat_history: str = "",
     ) -> ChatResponse:
         """Handle general conversation."""
-        response_text = await self.llm_service.generate_general_response(user_message)
+        response_text = await self.llm_service.generate_general_response(user_message, chat_history)
 
         suggestions = [
             "Собрать игровой ПК",

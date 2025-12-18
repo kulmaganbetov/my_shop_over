@@ -34,10 +34,13 @@ class LLMService:
     def __init__(self, client: Optional[BaseLLMClient] = None):
         self.client = client or get_llm_client()
 
-    async def detect_intent(self, message: str) -> IntentDetectionResult:
+    async def detect_intent(self, message: str, chat_history: str = "") -> IntentDetectionResult:
         """Detect user intent from message."""
         try:
-            user_prompt = INTENT_DETECTION_USER_PROMPT.format(message=message)
+            user_prompt = INTENT_DETECTION_USER_PROMPT.format(
+                message=message,
+                chat_history=chat_history,
+            )
             result = await self.client.complete_json(
                 system_prompt=INTENT_DETECTION_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
@@ -99,12 +102,14 @@ class LLMService:
         self,
         build_data: dict,
         user_request: str,
+        chat_history: str = "",
     ) -> str:
         """Generate a natural language response for PC build."""
         import json
         user_prompt = PC_BUILD_RESPONSE_USER_PROMPT.format(
             build_data=json.dumps(build_data, ensure_ascii=False, indent=2),
             user_request=user_request,
+            chat_history=chat_history,
         )
         return await self.client.complete(
             system_prompt=PC_BUILD_RESPONSE_SYSTEM_PROMPT,
@@ -117,6 +122,7 @@ class LLMService:
         query: str,
         results: list[dict],
         user_message: str,
+        chat_history: str = "",
     ) -> str:
         """Generate a natural language response for product search."""
         import json
@@ -124,6 +130,7 @@ class LLMService:
             query=query,
             results=json.dumps(results, ensure_ascii=False, indent=2),
             user_message=user_message,
+            chat_history=chat_history,
         )
         return await self.client.complete(
             system_prompt=PRODUCT_SEARCH_RESPONSE_SYSTEM_PROMPT,
@@ -147,9 +154,12 @@ class LLMService:
             temperature=0.5,
         )
 
-    async def generate_general_response(self, message: str) -> str:
+    async def generate_general_response(self, message: str, chat_history: str = "") -> str:
         """Generate a general conversational response."""
-        user_prompt = GENERAL_RESPONSE_USER_PROMPT.format(message=message)
+        user_prompt = GENERAL_RESPONSE_USER_PROMPT.format(
+            message=message,
+            chat_history=chat_history,
+        )
         return await self.client.complete(
             system_prompt=GENERAL_RESPONSE_SYSTEM_PROMPT,
             user_prompt=user_prompt,

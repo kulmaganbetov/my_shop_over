@@ -64,11 +64,11 @@ class ProductRepository(BaseRepository[Product]):
 
         if category:
             conditions.append(Product.category == category)
-        if min_price is not None:
+        if min_price is not None and min_price > 0:
             conditions.append(
                 or_(Product.price >= min_price, Product.discount_price >= min_price)
             )
-        if max_price is not None:
+        if max_price is not None and max_price > 0:
             conditions.append(
                 or_(Product.price <= max_price, Product.discount_price <= max_price)
             )
@@ -106,11 +106,11 @@ class ProductRepository(BaseRepository[Product]):
             Product.is_active == True,
         ]
 
-        if min_price is not None:
+        if min_price is not None and min_price > 0:
             conditions.append(
                 or_(Product.price >= min_price, Product.discount_price >= min_price)
             )
-        if max_price is not None:
+        if max_price is not None and max_price > 0:
             conditions.append(
                 or_(Product.price <= max_price, Product.discount_price <= max_price)
             )

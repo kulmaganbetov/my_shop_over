@@ -19,6 +19,15 @@ from app.services.compatibility import (
 logger = logging.getLogger(__name__)
 
 
+# Default budgets by purpose (in tenge)
+DEFAULT_BUDGETS = {
+    "gaming": 500000,      # Игровой ПК
+    "office": 200000,      # Офисный ПК
+    "work": 700000,        # Рабочая станция
+    "budget": 350000,      # Бюджетный ПК
+    "default": 450000,     # По умолчанию
+}
+
 # Component types mapping
 COMPONENT_TYPES = {
     "cpu": "Процессоры",
@@ -57,6 +66,11 @@ class PCBuildService:
             budget = params.budget_max
 
         purpose = params.purpose.value if isinstance(params.purpose, PCPurpose) else params.purpose
+
+        # Use default budget if not specified
+        if budget <= 0:
+            budget = DEFAULT_BUDGETS.get(purpose, DEFAULT_BUDGETS["default"])
+            logger.info(f"Using default budget for {purpose}: {budget} тенге")
 
         # Check for matching presets first
         presets = await self.preset_repo.get_by_budget(budget, purpose)
