@@ -45,15 +45,22 @@ celery_app.conf.update(
 
 # Beat schedule for periodic tasks
 celery_app.conf.beat_schedule = {
-    "sync-products-every-hour": {
+    # Sync products from FTP periodically
+    "sync-products-periodic": {
         "task": "app.tasks.ingestion.sync_products_from_ftp",
-        "schedule": 3600.0,  # every hour
+        "schedule": float(settings.product_sync_interval_seconds),  # default: 1 hour
     },
-    "update-embeddings-daily": {
+    # Process missing embeddings frequently until all are done
+    "update-embeddings-continuous": {
         "task": "app.tasks.embeddings.update_missing_embeddings",
-        "schedule": 86400.0,  # every 24 hours
+        "schedule": float(settings.embedding_interval_seconds),  # default: 60 seconds
+        "kwargs": {"batch_size": settings.embedding_batch_size},  # default: 100
     },
 }
+
+logger.info(f"  Beat schedule:")
+logger.info(f"    - Product sync: every {settings.product_sync_interval_seconds}s")
+logger.info(f"    - Embeddings: every {settings.embedding_interval_seconds}s (batch={settings.embedding_batch_size})")
 
 
 # Celery signals for logging

@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     debug: bool = True
     log_level: str = "INFO"
 
+    # Auto-sync settings
+    auto_sync_on_startup: bool = True  # Check and sync on FastAPI startup
+    embedding_batch_size: int = 100  # Products per embedding batch
+    embedding_interval_seconds: int = 60  # How often to check for missing embeddings
+    product_sync_interval_seconds: int = 3600  # How often to sync from FTP (1 hour)
+
 
 @lru_cache
 def get_settings() -> Settings:
