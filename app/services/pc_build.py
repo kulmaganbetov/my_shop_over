@@ -302,40 +302,47 @@ class PCBuildService:
         component_type: str,
         current_build: dict,
         budget: Optional[int] = None,
+        preference: Optional[str] = None,
         limit: int = 5,
     ) -> list[ProductSchema]:
-        """Get alternative components compatible with current build."""
+        """Get alternative components for replacement.
+
+        Returns products without strict compatibility filtering since
+        many products lack complete specifications for compatibility checks.
+        """
         component_config = COMPONENT_TYPES.get(component_type)
         if not component_config:
             return []
 
         db_component_type, search_keywords = component_config
 
+        # Get products from DB
         products = await self.product_repo.get_by_component_type(
             component_type=db_component_type,
             max_price=budget,
             in_stock_only=True,
-            limit=limit * 2,
+            limit=limit * 3,
             search_keywords=search_keywords,
         )
 
-        # Filter for compatibility
-        compatible = []
-        build_specs = self._extract_build_specs(current_build)
+        if not products:
+            return []
 
-        for product in products:
-            # Check compatibility with current build
-            test_build = current_build.copy()
-            test_build[component_type] = ProductSchema.model_validate(product)
-            test_specs = self._extract_build_specs(test_build)
+        # If user has a preference (e.g., "AMD", "cheaper"), filter by it
+        if preference:
+            preference_lower = preference.lower()
+            filtered = []
+            for product in products:
+                name_lower = product.name.lower() if product.name else ""
+                manufacturer_lower = product.manufacturer.lower() if product.manufacturer else ""
 
-            results = self.compatibility_engine.check_all_compatibility(test_specs)
-            status = self.compatibility_engine.get_overall_status(results)
+                # Check if preference matches name or manufacturer
+                if preference_lower in name_lower or preference_lower in manufacturer_lower:
+                    filtered.append(product)
 
-            if status != CompatibilityStatus.ERROR:
-                compatible.append(product)
+            # If we found matching products, use them; otherwise use all products
+            if filtered:
+                products = filtered
 
-            if len(compatible) >= limit:
-                break
-
-        return [ProductSchema.model_validate(p) for p in compatible]
+        # Return top products (already sorted by price DESC from repo)
+        return [ProductSchema.model_validate(p) for p in products[:limit]]

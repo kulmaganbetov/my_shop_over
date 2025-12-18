@@ -38,9 +38,12 @@ class ChatRepository(BaseRepository[ChatSession]):
         return result.scalar_one_or_none()
 
     async def update_session_context(self, session_id: str, context: dict) -> ChatSession:
-        """Update session context."""
+        """Update session context by MERGING with existing context."""
         chat_session = await self.get_or_create_session(session_id)
-        chat_session.context = context
+        # Merge new context with existing context
+        existing_context = chat_session.context or {}
+        existing_context.update(context)
+        chat_session.context = existing_context
         await self.session.commit()
         await self.session.refresh(chat_session)
         return chat_session

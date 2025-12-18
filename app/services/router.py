@@ -199,6 +199,7 @@ class IntentRouter:
             component_type=component_type,
             current_build=current_build.get("build", {}),
             budget=replace_params.budget,
+            preference=preference,
             limit=5,
         )
 
