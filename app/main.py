@@ -3,15 +3,21 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy import text
 
 from app.api.routes import router as api_router
 from app.api.admin import router as admin_router
 from app.core.config import settings
 from app.db.base import async_engine
+
+# Static files directory
+STATIC_DIR = Path(__file__).parent.parent / "static"
 
 # Configure logging
 logging.basicConfig(
@@ -131,16 +137,33 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1", tags=["chat"])
 app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
 
+# Mount static files
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
+    """Serve the chat interface."""
+    chat_file = STATIC_DIR / "index.html"
+    if chat_file.exists():
+        return FileResponse(chat_file)
     return {
         "service": "OverShop AI Assistant",
         "version": "0.1.0",
+        "chat": "/chat",
         "docs": "/docs",
         "health": "/api/v1/health",
     }
+
+
+@app.get("/chat")
+async def chat_page():
+    """Serve the chat interface."""
+    chat_file = STATIC_DIR / "index.html"
+    if chat_file.exists():
+        return FileResponse(chat_file)
+    return {"error": "Chat interface not found"}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Роберт - AI Ассистент | Over-Shop.kz</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --bg-dark: #0f0f1a;
+            --bg-card: #1a1a2e;
+            --bg-input: #16162a;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --text-muted: #6b6b7b;
+            --accent-green: #10b981;
+            --accent-blue: #3b82f6;
+            --border: #2a2a3e;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            background-image:
+                radial-gradient(ellipse at top, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
+                radial-gradient(ellipse at bottom, rgba(59, 130, 246, 0.05) 0%, transparent 50%);
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 800px;
+            height: 90vh;
+            max-height: 900px;
+            background: var(--bg-card);
+            border-radius: 24px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.05),
+                0 25px 50px -12px rgba(0, 0, 0, 0.5),
+                0 0 100px rgba(99, 102, 241, 0.1);
+        }
+
+        /* Header */
+        .chat-header {
+            padding: 20px 24px;
+            background: linear-gradient(180deg, var(--bg-card) 0%, transparent 100%);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo-container {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 20px;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        .header-info {
+            flex: 1;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--accent-green);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Messages */
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .message {
+            display: flex;
+            gap: 12px;
+            max-width: 85%;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .message.assistant .message-avatar {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+        }
+
+        .message.user .message-avatar {
+            background: var(--border);
+            color: var(--text-secondary);
+        }
+
+        .message-content {
+            padding: 14px 18px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .message.assistant .message-content {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 6px;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            border-bottom-right-radius: 6px;
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .message.user .message-time {
+            text-align: right;
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 14px 18px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            border-bottom-left-radius: 6px;
+            width: fit-content;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-8px); }
+        }
+
+        /* Suggestions */
+        .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .suggestion-btn {
+            padding: 8px 14px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .suggestion-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        /* Input area */
+        .chat-input-area {
+            padding: 20px 24px;
+            background: var(--bg-input);
+            border-top: 1px solid var(--border);
+        }
+
+        .input-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 8px;
+            transition: border-color 0.2s;
+        }
+
+        .input-container:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-size: 14px;
+            padding: 8px 12px;
+            font-family: inherit;
+        }
+
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .input-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .input-btn.file-btn {
+            background: var(--glass);
+            color: var(--text-secondary);
+        }
+
+        .input-btn.file-btn:hover {
+            background: var(--border);
+            color: var(--text-primary);
+        }
+
+        .input-btn.send-btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .input-btn.send-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .input-btn.send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .input-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* File preview */
+        .file-preview {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
+
+        .file-preview .file-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-preview .remove-file {
+            cursor: pointer;
+            color: var(--text-muted);
+            transition: color 0.2s;
+        }
+
+        .file-preview .remove-file:hover {
+            color: #ef4444;
+        }
+
+        /* Welcome message */
+        .welcome-message {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .welcome-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-blue) 100%);
+            border-radius: 24px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            box-shadow: 0 8px 30px rgba(99, 102, 241, 0.3);
+        }
+
+        .welcome-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .welcome-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            max-width: 400px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        /* Products in response */
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .product-card {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            transition: all 0.2s;
+        }
+
+        .product-card:hover {
+            border-color: var(--primary);
+        }
+
+        .product-name {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .product-price {
+            color: var(--accent-green);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .product-stock {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Hidden file input */
+        #file-input {
+            display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            body {
+                padding: 0;
+            }
+            .chat-container {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+            }
+            .message {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <!-- Header -->
+        <div class="chat-header">
+            <div class="logo-container">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <div class="header-info">
+                <div class="header-title">
+                    Роберт
+                    <span class="status-badge">
+                        <span class="status-dot"></span>
+                        онлайн
+                    </span>
+                </div>
+                <div class="header-subtitle">AI-ассистент Over-Shop.kz</div>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="chat-messages" id="chat-messages">
+            <div class="welcome-message">
+                <div class="welcome-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <h2 class="welcome-title">Привет! Я Роберт</h2>
+                <p class="welcome-subtitle">
+                    Ваш персональный ассистент в Over-Shop.kz.
+                    Помогу найти товары, собрать компьютер или отвечу на вопросы о доставке и гарантии.
+                </p>
+                <div class="suggestions" style="justify-content: center; margin-top: 24px;">
+                    <button class="suggestion-btn" onclick="sendSuggestion('Собери мне игровой ПК за 500000 тенге')">🎮 Собрать игровой ПК</button>
+                    <button class="suggestion-btn" onclick="sendSuggestion('Покажи видеокарты RTX')">🖥️ Видеокарты RTX</button>
+                    <button class="suggestion-btn" onclick="sendSuggestion('Как оформить доставку?')">📦 О доставке</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-area">
+            <div id="file-preview" class="file-preview" style="display: none;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <path d="M14 2v6h6"/>
+                </svg>
+                <span class="file-name" id="file-name"></span>
+                <span class="remove-file" onclick="removeFile()">✕</span>
+            </div>
+            <div class="input-container">
+                <input type="file" id="file-input" accept="image/*,.pdf,.doc,.docx,.txt" onchange="handleFileSelect(event)">
+                <button class="input-btn file-btn" onclick="document.getElementById('file-input').click()" title="Прикрепить файл">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                </button>
+                <input
+                    type="text"
+                    class="chat-input"
+                    id="chat-input"
+                    placeholder="Напишите сообщение..."
+                    onkeypress="handleKeyPress(event)"
+                >
+                <button class="input-btn send-btn" id="send-btn" onclick="sendMessage()" title="Отправить">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13"/>
+                        <path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000/api/v1';
+        let sessionId = localStorage.getItem('chatSessionId') || generateSessionId();
+        let selectedFile = null;
+        let isFirstMessage = true;
+
+        // Save session ID
+        localStorage.setItem('chatSessionId', sessionId);
+
+        function generateSessionId() {
+            return 'session-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                document.getElementById('file-name').textContent = file.name;
+                document.getElementById('file-preview').style.display = 'flex';
+            }
+        }
+
+        function removeFile() {
+            selectedFile = null;
+            document.getElementById('file-input').value = '';
+            document.getElementById('file-preview').style.display = 'none';
+        }
+
+        function sendSuggestion(text) {
+            document.getElementById('chat-input').value = text;
+            sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+
+            if (!message && !selectedFile) return;
+
+            // Clear welcome message on first real message
+            if (isFirstMessage) {
+                document.getElementById('chat-messages').innerHTML = '';
+                isFirstMessage = false;
+            }
+
+            // Add user message to chat
+            addMessage(message, 'user');
+            input.value = '';
+
+            // Show typing indicator
+            showTyping();
+
+            try {
+                const response = await fetch(`${API_URL}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId
+                    })
+                });
+
+                hideTyping();
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const data = await response.json();
+
+                // Add assistant response
+                addMessage(data.message, 'assistant', data);
+
+            } catch (error) {
+                hideTyping();
+                console.error('Error:', error);
+                addMessage('Извините, произошла ошибка. Пожалуйста, попробуйте позже.', 'assistant');
+            }
+
+            // Clear file if any
+            removeFile();
+        }
+
+        function addMessage(text, role, data = null) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const avatar = role === 'assistant' ?
+                `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>` :
+                `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>`;
+
+            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+            let extraContent = '';
+
+            // Add products if available
+            if (data && data.data && data.data.products && data.data.products.length > 0) {
+                extraContent += '<div class="products-grid">';
+                data.data.products.slice(0, 4).forEach(product => {
+                    const price = product.discount_price || product.price;
+                    const priceFormatted = price ? price.toLocaleString('ru-RU') + ' ₸' : 'Цена по запросу';
+                    extraContent += `
+                        <div class="product-card">
+                            <div class="product-name">${escapeHtml(product.name)}</div>
+                            <div class="product-price">${priceFormatted}</div>
+                            <div class="product-stock">${product.stock > 0 ? 'В наличии: ' + product.stock + ' шт.' : 'Под заказ'}</div>
+                        </div>
+                    `;
+                });
+                extraContent += '</div>';
+            }
+
+            // Add suggestions if available
+            if (data && data.suggestions && data.suggestions.length > 0) {
+                extraContent += '<div class="suggestions">';
+                data.suggestions.forEach(suggestion => {
+                    extraContent += `<button class="suggestion-btn" onclick="sendSuggestion('${escapeHtml(suggestion)}')">${escapeHtml(suggestion)}</button>`;
+                });
+                extraContent += '</div>';
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div>
+                    <div class="message-content">${formatMessage(text)}</div>
+                    ${extraContent}
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function showTyping() {
+            const messagesContainer = document.getElementById('chat-messages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = `
+                <div class="message-avatar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <div class="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            `;
+            messagesContainer.appendChild(typingDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function hideTyping() {
+            const typing = document.getElementById('typing-indicator');
+            if (typing) typing.remove();
+        }
+
+        function formatMessage(text) {
+            // Convert markdown-like formatting to HTML
+            return escapeHtml(text)
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\n/g, '<br>');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Focus input on load
+        document.getElementById('chat-input').focus();
+    </script>
+</body>
+</html>
