@@ -28,16 +28,17 @@ DEFAULT_BUDGETS = {
     "default": 450000,     # По умолчанию
 }
 
-# Component types mapping - (primary_type, search_keywords)
+# Component types mapping - exact category names from DB
+# Format: (exact_category_name, [fallback_keywords])
 COMPONENT_TYPES = {
-    "cpu": ("Процессоры", ["Процессор", "CPU", "Intel Core", "AMD Ryzen"]),
-    "gpu": ("Видеокарты", ["Видеокарта", "GeForce", "Radeon", "RTX", "GTX"]),
-    "motherboard": ("Материнские платы", ["Материнская плата", "Motherboard"]),
-    "ram": ("Оперативная память", ["Оперативная память", "DDR4", "DDR5", "RAM"]),
-    "storage": ("SSD накопители", ["SSD", "Накопитель", "Жесткий диск", "HDD", "NVMe"]),
-    "psu": ("Блоки питания", ["Блок питания", "PSU"]),
-    "case": ("Корпуса", ["Корпус", "Case"]),
-    "cooler": ("Кулеры", ["Кулер", "Охлаждение", "Cooler"]),
+    "cpu": ("Процессоры", ["Процессоры"]),
+    "gpu": ("Видеокарты", ["Видеокарты"]),
+    "motherboard": ("Материнские платы", ["Материнские платы"]),
+    "ram": ("Оперативная память", ["Оперативная память"]),
+    "storage": ("Твердотельные диски (SSD)", ["Твердотельные диски", "SSD"]),
+    "psu": ("Блоки питания", ["Блоки питания"]),
+    "case": ("Корпуса", ["Корпуса"]),
+    "cooler": ("Кулеры для процессоров", ["Кулеры для процессоров", "Кулеры"]),
 }
 
 
@@ -152,15 +153,31 @@ class PCBuildService:
 
             component_type, search_keywords = component_config
 
-            # Get products for this component type within budget
+            # Get products for this component type within budget range
+            # Use min_price to find products that match budget, not just cheapest
+            min_budget = int(component_budget * 0.5)  # 50% of allocated budget
+            max_budget = int(component_budget * 1.3)  # 130% of allocated budget
+
             products = await self.product_repo.get_by_component_type(
                 component_type=component_type,
-                max_price=component_budget * 1.2,
+                min_price=min_budget,
+                max_price=max_budget,
                 in_stock_only=True,
-                limit=10,
+                limit=20,
                 search_keywords=search_keywords,
             )
-            logger.info(f"Found {len(products)} products for {component} (budget: {component_budget})")
+            logger.info(f"Found {len(products)} products for {component} (budget: {min_budget}-{max_budget})")
+
+            # If no products in range, try without min_price constraint
+            if not products:
+                products = await self.product_repo.get_by_component_type(
+                    component_type=component_type,
+                    max_price=max_budget,
+                    in_stock_only=True,
+                    limit=20,
+                    search_keywords=search_keywords,
+                )
+                logger.info(f"Fallback: found {len(products)} products for {component}")
 
             if products:
                 # Select best product within budget

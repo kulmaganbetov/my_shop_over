@@ -120,31 +120,32 @@ CRITICAL RULES:
 1. NEVER invent prices - use ONLY the exact prices from the provided build data
 2. If a component is missing (null), say "не найден в наличии"
 3. Use the exact product names from the data
+4. price = цена в рассрочку, discount_price = цена при оплате картой
 
 Response format for each component:
-• Категория: [name from data]
-  Рассрочка: [installment_price] ₸/мес | Картой: [discount_price или price] ₸
+• [category]: [name]
+  Рассрочка: [price] ₸ | Картой: [discount_price] ₸
 
 Guidelines:
-- One short intro sentence
+- One short intro sentence about the build
 - List only components that have products (not null)
-- Show installment_price and discount_price/price from the data
-- End with total price
+- Use price for Рассрочка, discount_price for Картой
+- End with: Итого картой: [total_price] ₸
 - Use Russian language
-- DO NOT show stock availability"""
+- DO NOT show stock"""
 
 PC_BUILD_RESPONSE_USER_PROMPT = """Generate a response using ONLY the data below. DO NOT invent prices.
 
-{chat_history}Build Data (use these EXACT prices):
+{chat_history}Build Data (use these EXACT values):
 {build_data}
 
 User's request: {user_request}
 
 Format each component as:
 • [category]: [name]
-  Рассрочка: [installment_price] ₸/мес | Картой: [discount_price or price] ₸
+  Рассрочка: [price] ₸ | Картой: [discount_price] ₸
 
-End with: Итого: [total_price] ₸"""
+End with total: Итого картой: [total_price] ₸"""
 
 
 PRODUCT_SEARCH_RESPONSE_SYSTEM_PROMPT = """You are a product search assistant for over-shop.kz.
@@ -152,11 +153,11 @@ PRODUCT_SEARCH_RESPONSE_SYSTEM_PROMPT = """You are a product search assistant fo
 CRITICAL RULES:
 1. NEVER invent prices - use ONLY exact prices from the provided data
 2. DO NOT show stock availability
-3. Show installment and discount prices from data
+3. price = цена в рассрочку, discount_price = цена картой
 
 Response format for each product:
 1. [category]: [name]
-   Рассрочка: [installment_price] ₸/мес | Картой: [discount_price или price] ₸
+   Рассрочка: [price] ₸ | Картой: [discount_price] ₸
 
 Guidelines:
 - Max 5 products
@@ -174,7 +175,7 @@ User's message: {user_message}
 
 Format each product as:
 1. [category]: [name]
-   Рассрочка: [installment_price] ₸/мес | Картой: [discount_price or price] ₸
+   Рассрочка: [price] ₸ | Картой: [discount_price] ₸
 
 DO NOT show stock. Max 5 products."""
 
@@ -224,13 +225,13 @@ COMPONENT_REPLACE_SYSTEM_PROMPT = """You are a PC building assistant for over-sh
 CRITICAL RULES:
 1. NEVER invent prices - use ONLY exact prices from the provided data
 2. DO NOT show stock availability
-3. Present alternatives for the component user wants to replace
+3. price = цена в рассрочку, discount_price = цена картой
 
 Response format:
 Вот альтернативы для [component_type]:
 
 1. [category]: [name]
-   Рассрочка: [installment_price] ₸/мес | Картой: [discount_price or price] ₸
+   Рассрочка: [price] ₸ | Картой: [discount_price] ₸
 
 Guidelines:
 - Max 5 alternatives
@@ -249,7 +250,7 @@ Current build context:
 
 Format each alternative as:
 1. [category]: [name]
-   Рассрочка: [installment_price] ₸/мес | Картой: [discount_price or price] ₸"""
+   Рассрочка: [price] ₸ | Картой: [discount_price] ₸"""
 
 
 EMBEDDING_TEXT_TEMPLATE = """Product: {name}

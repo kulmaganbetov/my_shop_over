@@ -101,20 +101,22 @@ class ProductRepository(BaseRepository[Product]):
         limit: int = 50,
         search_keywords: list[str] = None,
     ) -> list[Product]:
-        """Get products by component type for PC builds.
+        """Get products by component type or category for PC builds.
 
         Args:
             component_type: Exact component type to match
-            search_keywords: Additional keywords to search in category/name
+            search_keywords: Category names to search (exact or partial match)
         """
         # Build type/category matching condition
         type_conditions = [Product.component_type == component_type]
 
-        # Also search by category if keywords provided
+        # Also search by category (exact match preferred)
         if search_keywords:
             for kw in search_keywords:
+                # Exact category match
+                type_conditions.append(Product.category == kw)
+                # Partial match as fallback
                 type_conditions.append(Product.category.ilike(f"%{kw}%"))
-                type_conditions.append(Product.name.ilike(f"%{kw}%"))
 
         conditions = [
             or_(*type_conditions),
@@ -123,20 +125,21 @@ class ProductRepository(BaseRepository[Product]):
 
         if min_price is not None and min_price > 0:
             conditions.append(
-                or_(Product.price >= min_price, Product.discount_price >= min_price)
+                func.coalesce(Product.discount_price, Product.price) >= min_price
             )
         if max_price is not None and max_price > 0:
             conditions.append(
-                or_(Product.price <= max_price, Product.discount_price <= max_price)
+                func.coalesce(Product.discount_price, Product.price) <= max_price
             )
         if in_stock_only:
             conditions.append(Product.stock > 0)
 
+        # Sort by price DESC to get best value for budget first
         result = await self.session.execute(
             select(Product)
             .where(and_(*conditions))
             .order_by(
-                func.coalesce(Product.discount_price, Product.price).asc()
+                func.coalesce(Product.discount_price, Product.price).desc()
             )
             .limit(limit)
         )

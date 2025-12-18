@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict
 
 
 class BaseSchema(BaseModel):
@@ -22,26 +22,11 @@ class ProductSchema(BaseSchema):
     supplier: Optional[str] = None
     stock: int
     manufacturer: Optional[str] = None
-    price: Optional[float] = None
-    discount_price: Optional[float] = None
+    price: Optional[float] = None  # Installment price (КредитРассрочка)
+    discount_price: Optional[float] = None  # Card payment price (БонуснаяЦена)
     category: Optional[str] = None
     component_type: Optional[str] = None
     specifications: Optional[dict] = None
-
-    @computed_field
-    @property
-    def installment_price(self) -> Optional[float]:
-        """Calculate 12-month installment price (no interest)."""
-        base_price = self.discount_price or self.price
-        if base_price:
-            return round(base_price / 12, 0)
-        return None
-
-    @computed_field
-    @property
-    def display_price(self) -> Optional[float]:
-        """Price for display (discount or regular)."""
-        return self.discount_price or self.price
 
 
 class ProductSearchResult(BaseSchema):
