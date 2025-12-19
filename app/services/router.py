@@ -144,6 +144,19 @@ class IntentRouter:
         """Handle PC build intent."""
         build_params = self.llm_service.parse_pc_build_params(params)
 
+        # Check for budget modifier (higher/lower) based on previous build
+        budget_modifier = params.get("budget_modifier")
+        if budget_modifier:
+            chat_session = await self.chat_repo.get_session_by_id(session_id)
+            if chat_session and chat_session.context:
+                prev_build = chat_session.context.get("current_build", {})
+                prev_price = prev_build.get("total_price", 0)
+                if prev_price > 0:
+                    if budget_modifier == "higher":
+                        build_params.budget = int(prev_price * 1.5)  # 50% more
+                    elif budget_modifier == "lower":
+                        build_params.budget = int(prev_price * 0.6)  # 40% less
+
         # Get build recommendation
         build_result = await self.pc_build_service.recommend_build(build_params)
 

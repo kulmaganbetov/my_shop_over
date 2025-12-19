@@ -228,9 +228,9 @@ class PCBuildService:
         1. Price within budget
         2. Stock availability
         3. Compatibility with current build
-        4. Exclude server components
+        4. Exclude server/notebook/external components
         """
-        # Filter out server components first
+        # Filter out unsuitable components first
         filtered_products = []
         for product in products:
             category_lower = (product.category or "").lower()
@@ -240,6 +240,22 @@ class PCBuildService:
             if "сервер" in category_lower or "для сервера" in category_lower:
                 continue
             if "ecc" in name_lower or "rdimm" in name_lower or "lrdimm" in name_lower:
+                continue
+
+            # Skip notebook RAM (SO-DIMM) - desktop uses regular DIMM
+            if "so-dimm" in name_lower or "sodimm" in name_lower:
+                continue
+            if "ноутбук" in category_lower or "для ноутбук" in name_lower:
+                continue
+
+            # Skip external storage - desktop uses internal drives
+            if "внешний" in name_lower or "внешний" in category_lower:
+                continue
+            if "external" in name_lower or "portable" in name_lower:
+                continue
+
+            # Skip DDR3 RAM for modern desktop builds (prefer DDR4/DDR5)
+            if "ddr3" in name_lower and "ddr4" not in name_lower and "ddr5" not in name_lower:
                 continue
 
             filtered_products.append(product)
@@ -392,7 +408,7 @@ class PCBuildService:
         if not products:
             return []
 
-        # Exclude server components (they're too expensive and not for consumers)
+        # Exclude server/notebook/external components
         filtered_products = []
         for product in products:
             category_lower = (product.category or "").lower()
@@ -404,6 +420,22 @@ class PCBuildService:
             if "xeon" in name_lower or "epyc" in name_lower:
                 continue
             if "ecc" in name_lower or "rdimm" in name_lower:
+                continue
+
+            # Skip notebook RAM (SO-DIMM) - desktop uses regular DIMM
+            if "so-dimm" in name_lower or "sodimm" in name_lower:
+                continue
+            if "ноутбук" in category_lower or "для ноутбук" in name_lower:
+                continue
+
+            # Skip external storage - desktop uses internal drives
+            if "внешний" in name_lower or "внешний" in category_lower:
+                continue
+            if "external" in name_lower or "portable" in name_lower:
+                continue
+
+            # Skip DDR3 RAM for modern desktop builds
+            if "ddr3" in name_lower and "ddr4" not in name_lower and "ddr5" not in name_lower:
                 continue
 
             filtered_products.append(product)

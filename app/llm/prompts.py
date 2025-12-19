@@ -6,32 +6,35 @@ Your task is to analyze user messages and extract:
 1. The user's intent
 2. Relevant parameters
 
-IMPORTANT:
+IMPORTANT RULES:
 - Return ONLY valid JSON, no other text.
 - Consider the chat history context when classifying.
-- If the user's message is vague (e.g., "найти товар" without specifying what), use intent "clarify_search".
-- Product CATEGORY names (видеокарты, процессоры, мыши, клавиатуры, мониторы) are SPECIFIC enough for "product_search" intent.
+- "сборка пк", "хочу пк", "собери пк", "хочу сборку" = ALWAYS "pc_build" intent (NOT clarify_search!)
+- "более дорогую/дешевую сборку" = "pc_build" with budget modifier
+- Product CATEGORY names (видеокарты, процессоры, мыши) = "product_search" intent
+- Only use "clarify_search" for truly vague requests like "найти товар" without ANY specifics
 
 Available intents:
-- "pc_build": User wants to build or configure a PC (includes budget and purpose mentions)
+- "pc_build": User wants to build/configure a PC. Keywords: сборка, собери, пк, компьютер, build
 - "component_replace": User wants to replace/change a specific component in existing build
 - "select_alternative": User selects a specific option (e.g., "первый", "второй", "выбираю 1", цифры)
 - "add_peripheral": User wants to add peripherals (monitor, mouse, keyboard, headset)
 - "product_search": User is looking for SPECIFIC products (mentions product name/type/category)
-- "clarify_search": User wants to find products but didn't specify what (e.g., "найти товар", "поиск")
+- "clarify_search": User wants to find products but gave NO specifics (e.g., just "найти товар")
 - "show_specs": User wants to see specifications (only after products/build were shown)
 - "show_build": User wants to see their current build
 - "filter_price": User wants to filter products by price
 - "delivery_info": User asks about delivery, shipping
 - "call_manager": User wants to talk to a manager/human
-- "cancel_manager": User cancels manager request (e.g., "нет, продолжить с ботом", "отмена", "не надо")
+- "cancel_manager": User cancels manager request
 - "faq": User has questions about store policies (warranty, returns, payment)
 - "general": General conversation, greetings, thanks
 - "unknown": Cannot determine intent
 
 For pc_build:
-- budget: number (in tenge), extract from message
+- budget: number (in tenge), extract from message. If "дороже/дорогую" use 700000, if "дешевле" use 300000
 - purpose: one of ["gaming", "work", "office", "streaming", "content_creation", "general"]
+- budget_modifier: "higher" if user wants more expensive, "lower" if cheaper
 
 For component_replace:
 - component_type: one of ["cpu", "gpu", "motherboard", "ram", "storage", "psu", "case", "cooler"]
@@ -45,7 +48,7 @@ For add_peripheral:
 - budget: optional budget
 
 For product_search:
-- query: the search query (MUST be specific, not just "товар")
+- query: the search query
 - category: product category if mentioned
 
 For filter_price:
@@ -57,10 +60,22 @@ Examples:
 User: "Собери игровой ПК за 500000"
 {"intent": "pc_build", "confidence": 0.95, "params": {"budget": 500000, "purpose": "gaming"}}
 
+User: "Хочу сборку пк" or "сборка пк" or "хочу пк"
+{"intent": "pc_build", "confidence": 0.95, "params": {"purpose": "general"}}
+
+User: "Собери мне пк"
+{"intent": "pc_build", "confidence": 0.95, "params": {"purpose": "general"}}
+
+User: "более дорогую собери" or "дороже" (after build was shown)
+{"intent": "pc_build", "confidence": 0.9, "params": {"budget": 700000, "budget_modifier": "higher"}}
+
+User: "подешевле сборку" or "бюджетный вариант"
+{"intent": "pc_build", "confidence": 0.9, "params": {"budget": 300000, "budget_modifier": "lower"}}
+
 User: "Поменяй видеокарту"
 {"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "gpu"}}
 
-User: "Замени процессор на Intel" or "Хочу интел вместо AMD"
+User: "Замени процессор на Intel"
 {"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "cpu", "preference": "intel"}}
 
 User: "Поставь видеокарту подешевле"
@@ -69,14 +84,11 @@ User: "Поставь видеокарту подешевле"
 User: "Выбираю первый вариант" or "1" or "первый"
 {"intent": "select_alternative", "confidence": 0.95, "params": {"selection": 1}}
 
+User: "видеокарты" or "процессоры" or "мониторы"
+{"intent": "product_search", "confidence": 0.95, "params": {"query": "<category_name>"}}
+
 User: "покажи бюджетные клавы и мыши"
 {"intent": "product_search", "confidence": 0.9, "params": {"query": "бюджетные клавиатуры мыши"}}
-
-User: "видеокарты" or "видеокарт" or "Видеокарты"
-{"intent": "product_search", "confidence": 0.95, "params": {"query": "видеокарты", "category": "Видеокарты"}}
-
-User: "процессоры" or "мониторы" or "клавиатуры"
-{"intent": "product_search", "confidence": 0.95, "params": {"query": "<category_name>"}}
 
 User: "Найти товар" or "Поиск" (without specifying WHAT)
 {"intent": "clarify_search", "confidence": 0.9, "params": {}}
@@ -87,14 +99,8 @@ User: "Показать характеристики"
 User: "Показать сборку" or "Покажи мою сборку"
 {"intent": "show_build", "confidence": 0.9, "params": {}}
 
-User: "Показать другие модели"
-{"intent": "product_search", "confidence": 0.8, "params": {"query": "другие модели"}}
-
-User: "Нет, продолжить с ботом" or "Отмена" or "Не надо менеджера"
+User: "Нет, продолжить с ботом" or "Отмена"
 {"intent": "cancel_manager", "confidence": 0.95, "params": {}}
-
-User: "Да, вызвать менеджера" or "Да"  (after manager confirmation prompt)
-{"intent": "call_manager", "confidence": 0.95, "params": {"confirmed": true}}
 
 User: "Позови менеджера"
 {"intent": "call_manager", "confidence": 0.95, "params": {"reason": "запрос клиента"}}
