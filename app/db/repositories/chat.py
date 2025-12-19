@@ -40,10 +40,13 @@ class ChatRepository(BaseRepository[ChatSession]):
     async def update_session_context(self, session_id: str, context: dict) -> ChatSession:
         """Update session context by MERGING with existing context."""
         chat_session = await self.get_or_create_session(session_id)
-        # Merge new context with existing context
-        existing_context = chat_session.context or {}
+        # Create a NEW dict to ensure SQLAlchemy detects the change
+        existing_context = dict(chat_session.context or {})
         existing_context.update(context)
         chat_session.context = existing_context
+        # Mark as modified to ensure SQLAlchemy saves the change
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(chat_session, "context")
         await self.session.commit()
         await self.session.refresh(chat_session)
         return chat_session
