@@ -59,6 +59,12 @@ User: "Собери игровой ПК за 500000"
 User: "Поменяй видеокарту"
 {"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "gpu"}}
 
+User: "Замени процессор на Intel" or "Хочу интел вместо AMD"
+{"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "cpu", "preference": "intel"}}
+
+User: "Поставь видеокарту подешевле"
+{"intent": "component_replace", "confidence": 0.9, "params": {"component_type": "gpu", "preference": "cheaper"}}
+
 User: "Выбираю первый вариант" or "1" or "первый"
 {"intent": "select_alternative", "confidence": 0.95, "params": {"selection": 1}}
 

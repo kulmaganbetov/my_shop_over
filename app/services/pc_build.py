@@ -309,6 +309,7 @@ class PCBuildService:
 
         Returns products without strict compatibility filtering since
         many products lack complete specifications for compatibility checks.
+        Uses reasonable budget based on the current component's price.
         """
         component_config = COMPONENT_TYPES.get(component_type)
         if not component_config:
@@ -316,33 +317,82 @@ class PCBuildService:
 
         db_component_type, search_keywords = component_config
 
+        # Calculate reasonable budget based on current component price
+        current_component = current_build.get(component_type)
+        if current_component:
+            if isinstance(current_component, dict):
+                current_price = current_component.get("discount_price") or current_component.get("price") or 0
+            else:
+                current_price = getattr(current_component, "discount_price", None) or getattr(current_component, "price", 0)
+
+            # Allow alternatives from 50% to 200% of current component price
+            min_budget = int(current_price * 0.5)
+            max_budget = int(current_price * 2.0)
+            logger.info(f"Component alternatives budget: {min_budget}-{max_budget} (current: {current_price})")
+        else:
+            min_budget = None
+            max_budget = budget
+
         # Get products from DB
         products = await self.product_repo.get_by_component_type(
             component_type=db_component_type,
-            max_price=budget,
+            min_price=min_budget,
+            max_price=max_budget,
             in_stock_only=True,
-            limit=limit * 3,
+            limit=50,  # Get more to filter
             search_keywords=search_keywords,
         )
 
         if not products:
+            # Fallback without min price
+            products = await self.product_repo.get_by_component_type(
+                component_type=db_component_type,
+                max_price=max_budget,
+                in_stock_only=True,
+                limit=50,
+                search_keywords=search_keywords,
+            )
+
+        if not products:
             return []
 
-        # If user has a preference (e.g., "AMD", "cheaper"), filter by it
+        # Exclude server components (they're too expensive and not for consumers)
+        filtered_products = []
+        for product in products:
+            category_lower = (product.category or "").lower()
+            name_lower = (product.name or "").lower()
+
+            # Skip server components
+            if "сервер" in category_lower or "для сервера" in category_lower:
+                continue
+            if "xeon" in name_lower or "epyc" in name_lower:
+                continue
+
+            filtered_products.append(product)
+
+        products = filtered_products if filtered_products else products
+
+        # If user has a preference (e.g., "Intel", "AMD"), filter by it
         if preference:
             preference_lower = preference.lower()
-            filtered = []
+            preference_filtered = []
             for product in products:
                 name_lower = product.name.lower() if product.name else ""
                 manufacturer_lower = product.manufacturer.lower() if product.manufacturer else ""
 
                 # Check if preference matches name or manufacturer
                 if preference_lower in name_lower or preference_lower in manufacturer_lower:
-                    filtered.append(product)
+                    preference_filtered.append(product)
 
-            # If we found matching products, use them; otherwise use all products
-            if filtered:
-                products = filtered
+            # If we found matching products, use them
+            if preference_filtered:
+                products = preference_filtered
+                logger.info(f"Found {len(products)} products matching preference '{preference}'")
+            else:
+                logger.info(f"No products matching preference '{preference}', showing all alternatives")
 
-        # Return top products (already sorted by price DESC from repo)
+        # Sort by price (ascending for reasonable alternatives)
+        products.sort(key=lambda p: p.discount_price or p.price or 0)
+
+        # Return products
         return [ProductSchema.model_validate(p) for p in products[:limit]]
