@@ -228,7 +228,25 @@ class PCBuildService:
         1. Price within budget
         2. Stock availability
         3. Compatibility with current build
+        4. Exclude server components
         """
+        # Filter out server components first
+        filtered_products = []
+        for product in products:
+            category_lower = (product.category or "").lower()
+            name_lower = (product.name or "").lower()
+
+            # Skip server components
+            if "сервер" in category_lower or "для сервера" in category_lower:
+                continue
+            if "ecc" in name_lower or "rdimm" in name_lower or "lrdimm" in name_lower:
+                continue
+
+            filtered_products.append(product)
+
+        # Use filtered list, fallback to original if all filtered out
+        products = filtered_products if filtered_products else products
+
         # Filter products within budget (strict - no overflow)
         candidates = []
         for product in products:
@@ -317,18 +335,36 @@ class PCBuildService:
 
         db_component_type, search_keywords = component_config
 
-        # Calculate reasonable budget based on current component price
+        # Check if preference is about price (cheaper/better)
+        preference_lower = (preference or "").lower()
+        wants_cheaper = any(word in preference_lower for word in ["дешев", "cheap", "бюджет", "недорог"])
+        wants_better = any(word in preference_lower for word in ["дорож", "лучш", "better", "мощн", "топов"])
+
+        # Calculate budget based on current component price and preference
         current_component = current_build.get(component_type)
+        current_price = 0
         if current_component:
             if isinstance(current_component, dict):
                 current_price = current_component.get("discount_price") or current_component.get("price") or 0
             else:
                 current_price = getattr(current_component, "discount_price", None) or getattr(current_component, "price", 0)
 
-            # Allow alternatives from 50% to 200% of current component price
-            min_budget = int(current_price * 0.5)
-            max_budget = int(current_price * 2.0)
-            logger.info(f"Component alternatives budget: {min_budget}-{max_budget} (current: {current_price})")
+        if current_price > 0:
+            if wants_cheaper:
+                # Show products BELOW current price (20% to 90% of current)
+                min_budget = int(current_price * 0.2)
+                max_budget = int(current_price * 0.95)  # Must be cheaper
+                logger.info(f"Cheaper alternatives: {min_budget}-{max_budget} (current: {current_price})")
+            elif wants_better:
+                # Show products ABOVE current price (110% to 300%)
+                min_budget = int(current_price * 1.05)
+                max_budget = int(current_price * 3.0)
+                logger.info(f"Better alternatives: {min_budget}-{max_budget} (current: {current_price})")
+            else:
+                # Allow alternatives from 50% to 200% of current component price
+                min_budget = int(current_price * 0.5)
+                max_budget = int(current_price * 2.0)
+                logger.info(f"Component alternatives budget: {min_budget}-{max_budget} (current: {current_price})")
         else:
             min_budget = None
             max_budget = budget
@@ -367,14 +403,16 @@ class PCBuildService:
                 continue
             if "xeon" in name_lower or "epyc" in name_lower:
                 continue
+            if "ecc" in name_lower or "rdimm" in name_lower:
+                continue
 
             filtered_products.append(product)
 
         products = filtered_products if filtered_products else products
 
-        # If user has a preference (e.g., "Intel", "AMD"), filter by it
-        if preference:
-            preference_lower = preference.lower()
+        # If user has a brand preference (e.g., "Intel", "AMD"), filter by it
+        # Skip price preferences as they're already handled above
+        if preference and not wants_cheaper and not wants_better:
             preference_filtered = []
             for product in products:
                 name_lower = product.name.lower() if product.name else ""

@@ -10,6 +10,7 @@ IMPORTANT:
 - Return ONLY valid JSON, no other text.
 - Consider the chat history context when classifying.
 - If the user's message is vague (e.g., "найти товар" without specifying what), use intent "clarify_search".
+- Product CATEGORY names (видеокарты, процессоры, мыши, клавиатуры, мониторы) are SPECIFIC enough for "product_search" intent.
 
 Available intents:
 - "pc_build": User wants to build or configure a PC (includes budget and purpose mentions)
@@ -70,6 +71,12 @@ User: "Выбираю первый вариант" or "1" or "первый"
 
 User: "покажи бюджетные клавы и мыши"
 {"intent": "product_search", "confidence": 0.9, "params": {"query": "бюджетные клавиатуры мыши"}}
+
+User: "видеокарты" or "видеокарт" or "Видеокарты"
+{"intent": "product_search", "confidence": 0.95, "params": {"query": "видеокарты", "category": "Видеокарты"}}
+
+User: "процессоры" or "мониторы" or "клавиатуры"
+{"intent": "product_search", "confidence": 0.95, "params": {"query": "<category_name>"}}
 
 User: "Найти товар" or "Поиск" (without specifying WHAT)
 {"intent": "clarify_search", "confidence": 0.9, "params": {}}

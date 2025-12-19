@@ -240,11 +240,23 @@ class IntentRouter:
         """Handle product search intent."""
         search_params = self.llm_service.parse_product_search_params(params)
 
+        # Check for pending price filter from previous FILTER_PRICE intent
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        if chat_session and chat_session.context:
+            pending_filter = chat_session.context.get("pending_price_filter")
+            if pending_filter:
+                search_params.min_price = pending_filter.get("min")
+                search_params.max_price = pending_filter.get("max")
+                # Clear the pending filter
+                await self.chat_repo.update_session_context(
+                    session_id,
+                    {"pending_price_filter": None}
+                )
+
         # If query is too vague or is "другие модели", check context
         query = search_params.query.lower()
         if query in ["другие модели", "другие", "еще", "ещё"]:
             # Try to get last search context
-            chat_session = await self.chat_repo.get_session_by_id(session_id)
             if chat_session and chat_session.context:
                 last_query = chat_session.context.get("last_search_query", "")
                 last_category = chat_session.context.get("last_search_category", "")
@@ -705,6 +717,11 @@ class IntentRouter:
             last_query = chat_session.context.get("last_search_query", "")
 
         if not last_query:
+            # Save price filter for next product search
+            await self.chat_repo.update_session_context(
+                session_id,
+                {"pending_price_filter": {"min": min_price, "max": max_price}}
+            )
             return ChatResponse(
                 message=f"Какой товар искать в диапазоне от {min_price or 0:,.0f} до {max_price or '∞'} ₸?",
                 intent=Intent.FILTER_PRICE,
