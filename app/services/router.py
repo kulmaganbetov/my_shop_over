@@ -383,7 +383,7 @@ class IntentRouter:
 
         selected = items_list[selection]
 
-        # If this was a component replacement, update the build
+        # If this was a component replacement, update the build and show full build
         if alternatives:
             component_type = context.get("last_component_type", "")
             current_build = context.get("current_build", {})
@@ -401,6 +401,20 @@ class IntentRouter:
                 await self.chat_repo.update_session_context(
                     session_id,
                     {"current_build": current_build, "last_alternatives": []}
+                )
+
+                # Generate response showing the full updated build
+                response_text = await self.llm_service.generate_pc_build_response(
+                    build_data=current_build,
+                    user_request=f"Заменён компонент: {selected.get('name', '')}",
+                    chat_history=chat_history,
+                )
+
+                return ChatResponse(
+                    message=response_text,
+                    intent=Intent.SELECT_ALTERNATIVE,
+                    session_id=session_id,
+                    data=current_build,
                 )
 
         name = selected.get("name", "товар")
