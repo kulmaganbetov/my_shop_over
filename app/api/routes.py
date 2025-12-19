@@ -12,37 +12,35 @@ from app.db.repositories import ChatRepository, ProductRepository
 from app.llm.service import LLMService
 from app.schemas.chat import ChatRequest, ChatResponse, ProductSearchResponse
 from app.schemas.common import ProductSchema
-from app.services.router import IntentRouter
+from app.services.orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-async def get_intent_router(
+async def get_orchestrator(
     session: AsyncSession = Depends(get_async_session),
-) -> IntentRouter:
-    """Dependency for getting the intent router."""
-    llm_service = LLMService()
-    return IntentRouter(session, llm_service)
+) -> Orchestrator:
+    """Dependency for getting the orchestrator."""
+    return Orchestrator(session)
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    router: IntentRouter = Depends(get_intent_router),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """
     Main chat endpoint for the AI assistant.
 
-    Accepts user messages and returns assistant responses.
-    The system automatically detects intent and routes to appropriate service.
+    Uses LLM as orchestrator to decide which backend tool to call.
     """
     # Generate session ID if not provided
     session_id = request.session_id or str(uuid.uuid4())
 
     try:
-        response = await router.process_message(request, session_id)
+        response = await orchestrator.process_message(request.message, session_id)
         return response
     except Exception as e:
         logger.error(f"Chat error: {e}")
