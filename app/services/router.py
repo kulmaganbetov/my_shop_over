@@ -396,6 +396,10 @@ class IntentRouter:
                     for c in current_build["build"].values()
                     if c
                 )
+                # Add peripherals to total
+                for p in current_build.get("peripherals", {}).values():
+                    if p:
+                        total += p.get("discount_price") or p.get("price") or 0
                 current_build["total_price"] = total
 
                 await self.chat_repo.update_session_context(
@@ -407,6 +411,48 @@ class IntentRouter:
                 response_text = await self.llm_service.generate_pc_build_response(
                     build_data=current_build,
                     user_request=f"Заменён компонент: {selected.get('name', '')}",
+                    chat_history=chat_history,
+                )
+
+                return ChatResponse(
+                    message=response_text,
+                    intent=Intent.SELECT_ALTERNATIVE,
+                    session_id=session_id,
+                    data=current_build,
+                )
+
+        # If this was a peripheral selection, add to build
+        if peripherals:
+            peripheral_type = context.get("last_peripheral_type", "mouse")
+            current_build = context.get("current_build", {})
+
+            if current_build:
+                # Initialize peripherals dict if not exists
+                if "peripherals" not in current_build:
+                    current_build["peripherals"] = {}
+
+                current_build["peripherals"][peripheral_type] = selected
+
+                # Recalculate total price including peripherals
+                total = sum(
+                    (c.get("discount_price") or c.get("price") or 0)
+                    for c in current_build.get("build", {}).values()
+                    if c
+                )
+                for p in current_build.get("peripherals", {}).values():
+                    if p:
+                        total += p.get("discount_price") or p.get("price") or 0
+                current_build["total_price"] = total
+
+                await self.chat_repo.update_session_context(
+                    session_id,
+                    {"current_build": current_build, "last_peripherals": []}
+                )
+
+                # Generate response showing the full updated build with peripherals
+                response_text = await self.llm_service.generate_pc_build_response(
+                    build_data=current_build,
+                    user_request=f"Добавлена периферия: {selected.get('name', '')}",
                     chat_history=chat_history,
                 )
 
@@ -504,7 +550,7 @@ class IntentRouter:
         session_id: str,
         chat_history: str = "",
     ) -> ChatResponse:
-        """Handle showing product specifications."""
+        """Handle showing product specifications with optional pros/cons analysis."""
         # Get context to find what to show specs for
         chat_session = await self.chat_repo.get_session_by_id(session_id)
 
@@ -520,28 +566,47 @@ class IntentRouter:
         last_search = context.get("last_search_results", [])
         last_peripherals = context.get("last_peripherals", [])
 
+        # Check if user wants detailed analysis (pros/cons)
+        user_msg_lower = user_message.lower()
+        wants_analysis = any(word in user_msg_lower for word in [
+            "плюс", "минус", "анализ", "оценк", "преимущ", "недостат",
+            "pros", "cons", "плюсы", "минусы", "сравн"
+        ])
+
         # Priority: build > search results > peripherals
         if current_build.get("build"):
-            # Show specs for all components in build
-            lines = ["Характеристики сборки:\n"]
-            for comp_type, comp in current_build["build"].items():
-                if comp:
-                    specs = comp.get("specifications", {})
-                    lines.append(f"**{comp_type.upper()}**: {comp.get('name', '')[:50]}")
-                    if specs:
-                        for key, val in list(specs.items())[:5]:  # Limit specs shown
-                            lines.append(f"  • {key}: {val}")
-                    lines.append("")
+            if wants_analysis:
+                # Use LLM for detailed pros/cons analysis
+                response_text = await self.llm_service.generate_specs_analysis(
+                    build_data=current_build,
+                    user_question=user_message,
+                )
+                return ChatResponse(
+                    message=response_text,
+                    intent=Intent.SHOW_SPECS,
+                    session_id=session_id,
+                )
+            else:
+                # Show basic specs
+                lines = ["Характеристики сборки:\n"]
+                for comp_type, comp in current_build["build"].items():
+                    if comp:
+                        specs = comp.get("specifications", {})
+                        lines.append(f"**{comp_type.upper()}**: {comp.get('name', '')[:50]}")
+                        if specs:
+                            for key, val in list(specs.items())[:5]:
+                                lines.append(f"  • {key}: {val}")
+                        lines.append("")
 
-            return ChatResponse(
-                message="\n".join(lines),
-                intent=Intent.SHOW_SPECS,
-                session_id=session_id,
-            )
+                return ChatResponse(
+                    message="\n".join(lines),
+                    intent=Intent.SHOW_SPECS,
+                    session_id=session_id,
+                )
         elif last_search:
             # Show specs for last search results
             lines = ["Характеристики найденных товаров:\n"]
-            for i, p in enumerate(last_search[:3], 1):  # First 3
+            for i, p in enumerate(last_search[:3], 1):
                 specs = p.get("specifications", {})
                 lines.append(f"{i}. {p.get('name', '')[:50]}")
                 if specs:

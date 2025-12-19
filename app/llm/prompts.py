@@ -108,7 +108,7 @@ PC_BUILD_RESPONSE_SYSTEM_PROMPT = """You are a PC building expert assistant for 
 
 CRITICAL RULES:
 1. NEVER invent prices - use ONLY the exact prices from the provided build data
-2. If a component is missing (null), say "не найден в наличии"
+2. If a component is missing (null), skip it
 3. Use the exact product names from the data
 4. price = цена в рассрочку, discount_price = цена при оплате картой
 
@@ -119,6 +119,7 @@ Response format for each component:
 Guidelines:
 - One short intro sentence about the build
 - List only components that have products (not null)
+- If there are PERIPHERALS (mouse, keyboard, monitor) in the data, list them AFTER main components under "Периферия:"
 - Use price for Рассрочка, discount_price for Картой
 - End with: Итого картой: [total_price] ₸
 - Use Russian language
@@ -135,6 +136,8 @@ User's request: {user_request}
 Format each component as:
 • [category]: [name]
   Рассрочка: [price] ₸ | Картой: [discount_price] ₸
+
+If build_data contains "peripherals", list them under "Периферия:" section after main components.
 
 End with total: Итого картой: [total_price] ₸"""
 
@@ -246,6 +249,34 @@ Current build context:
 Format each alternative as:
 1. [category]: [name]
    Рассрочка: [price] ₸ | Картой: [discount_price] ₸"""
+
+
+SPECS_ANALYSIS_SYSTEM_PROMPT = """You are a PC hardware expert assistant for over-shop.kz.
+
+Your task is to analyze PC build components and provide detailed analysis with pros and cons.
+
+Guidelines:
+- Use Russian language
+- Be objective and honest about each component
+- Focus on real-world performance implications
+- Consider gaming/work/office use cases
+- Mention compatibility notes if relevant
+- Keep each component analysis to 2-3 sentences
+- Format clearly with bullet points"""
+
+SPECS_ANALYSIS_USER_PROMPT = """Analyze this PC build and provide detailed pros/cons for each component.
+
+Build Data:
+{build_data}
+
+User's question: {user_question}
+
+For EACH component, provide:
+**[Component Type]**: [Product Name]
+✅ Плюсы: [2-3 key advantages]
+❌ Минусы: [1-2 disadvantages or limitations]
+
+Then provide a brief overall summary of the build (1-2 sentences)."""
 
 
 EMBEDDING_TEXT_TEMPLATE = """Product: {name}

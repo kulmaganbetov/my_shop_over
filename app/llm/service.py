@@ -17,6 +17,8 @@ from app.llm.prompts import (
     PC_BUILD_RESPONSE_USER_PROMPT,
     PRODUCT_SEARCH_RESPONSE_SYSTEM_PROMPT,
     PRODUCT_SEARCH_RESPONSE_USER_PROMPT,
+    SPECS_ANALYSIS_SYSTEM_PROMPT,
+    SPECS_ANALYSIS_USER_PROMPT,
     EMBEDDING_TEXT_TEMPLATE,
 )
 from app.schemas.llm import (
@@ -198,6 +200,23 @@ class LLMService:
             system_prompt=GENERAL_RESPONSE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.8,
+        )
+
+    async def generate_specs_analysis(
+        self,
+        build_data: dict,
+        user_question: str,
+    ) -> str:
+        """Generate detailed specs analysis with pros/cons."""
+        import json
+        user_prompt = SPECS_ANALYSIS_USER_PROMPT.format(
+            build_data=json.dumps(build_data, ensure_ascii=False, indent=2),
+            user_question=user_question,
+        )
+        return await self.client.complete(
+            system_prompt=SPECS_ANALYSIS_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.7,
         )
 
     async def get_embedding(self, text: str) -> list[float]:
