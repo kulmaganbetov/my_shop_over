@@ -111,8 +111,11 @@ class ToolExecutor:
 
         build_data = result.model_dump()
 
-        # Save to context
-        await self._update_context(session_id, {"current_build": build_data})
+        # Save to context with original budget for future reference
+        await self._update_context(session_id, {
+            "current_build": build_data,
+            "original_budget": budget,  # Save so LLM can reference it
+        })
 
         return build_data
 
