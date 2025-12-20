@@ -716,11 +716,15 @@ class PCBuildService:
         budget: Optional[int] = None,
         preference: Optional[str] = None,
         limit: int = 5,
-    ) -> list[ProductSchema]:
-        """Get alternative components that are COMPATIBLE with current build."""
+    ) -> tuple[list[ProductSchema], Optional[str]]:
+        """Get alternative components.
+
+        Returns:
+            tuple: (list of alternatives, optional warning message)
+        """
         component_config = COMPONENT_TYPES.get(component_type)
         if not component_config:
-            return []
+            return [], None
 
         db_component_type, search_keywords = component_config
 
@@ -730,10 +734,14 @@ class PCBuildService:
         if current_component:
             current_price = current_component.get("discount_price") or current_component.get("price") or 0
 
-        # Determine budget range based on preference
+        # Parse preference for manufacturer and price hints
         preference_lower = (preference or "").lower()
         wants_cheaper = any(word in preference_lower for word in ["дешев", "cheap", "бюджет"])
         wants_better = any(word in preference_lower for word in ["дорож", "лучш", "better", "мощн"])
+
+        # Manufacturer preference
+        wants_intel = any(word in preference_lower for word in ["intel", "интел", "core"])
+        wants_amd = any(word in preference_lower for word in ["amd", "амд", "ryzen", "райзен"])
 
         if current_price > 0:
             if wants_cheaper:
@@ -776,8 +784,26 @@ class PCBuildService:
             mb_comp.get("specifications", {}),
         ) if mb_comp else MotherboardSpecs()
 
-        # Filter for compatibility
+        # Filter products
         compatible_products = []
+        warning_message = None
+
+        # Check if user wants to change CPU platform
+        platform_change_requested = False
+        if component_type == "cpu" and (wants_intel or wants_amd):
+            current_cpu_name = current_component.get("name", "").lower() if current_component else ""
+            current_is_intel = "intel" in current_cpu_name or "core i" in current_cpu_name
+            current_is_amd = "amd" in current_cpu_name or "ryzen" in current_cpu_name
+
+            if (wants_intel and current_is_amd) or (wants_amd and current_is_intel):
+                platform_change_requested = True
+                warning_message = (
+                    "⚠️ Смена платформы (Intel ↔ AMD) требует также замены "
+                    "материнской платы и возможно оперативной памяти. "
+                    "Рекомендую собрать новую сборку с нуля командой: "
+                    "'Собери ПК на Intel за [бюджет]'"
+                )
+
         for product in products:
             name_lower = (product.name or "").lower()
 
@@ -789,7 +815,15 @@ class PCBuildService:
             if "внешний" in name_lower or "external" in name_lower:
                 continue
 
-            # Component-specific compatibility
+            # Manufacturer filter
+            if wants_intel:
+                if "amd" in name_lower or "ryzen" in name_lower:
+                    continue
+            if wants_amd:
+                if "intel" in name_lower or "core i" in name_lower:
+                    continue
+
+            # Component-specific compatibility (skip if platform change requested)
             if component_type == "motherboard":
                 specs = self.specs_extractor.extract_motherboard_specs(product.name or "", {})
                 # Must match CPU socket
@@ -804,13 +838,14 @@ class PCBuildService:
 
             elif component_type == "cpu":
                 specs = self.specs_extractor.extract_cpu_specs(product.name or "", {})
-                # Must match motherboard socket
-                if mb_specs.socket and specs.socket != mb_specs.socket:
-                    continue
+                # If NOT platform change, must match motherboard socket
+                if not platform_change_requested:
+                    if mb_specs.socket and specs.socket != mb_specs.socket:
+                        continue
 
             compatible_products.append(product)
 
         # Sort by price
         compatible_products.sort(key=lambda p: p.discount_price or p.price or 0)
 
-        return [ProductSchema.model_validate(p) for p in compatible_products[:limit]]
+        return [ProductSchema.model_validate(p) for p in compatible_products[:limit]], warning_message

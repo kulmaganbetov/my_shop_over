@@ -166,7 +166,7 @@ class ToolExecutor:
             return {"error": "Сначала нужно собрать ПК"}
 
         build_service = PCBuildService(self.session, LLMService())
-        alternatives = await build_service.get_component_alternatives(
+        alternatives, warning_message = await build_service.get_component_alternatives(
             component_type=component_type,
             current_build=current_build.get("build", {}),
             preference=preference,
@@ -181,11 +181,17 @@ class ToolExecutor:
             "last_component_type": component_type,
         })
 
-        return {
+        result = {
             "alternatives": alternatives_data,
             "component_type": component_type,
             "preference": preference,
         }
+
+        # Add warning about platform change if needed
+        if warning_message:
+            result["warning"] = warning_message
+
+        return result
 
     async def _tool_select_item(self, params: dict, session_id: str) -> dict:
         """Select an item from a list by number."""

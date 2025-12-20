@@ -44,8 +44,13 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - "RTX 4070", "мониторы до 200000"
 
 4. **get_alternatives** - замена компонента в сборке:
-   - "замени видеокарту", "другой процессор", "поменяй на Intel"
+   - "замени видеокарту", "другой процессор", "хочу Intel"
    - ТОЛЬКО если есть сборка!
+   - ВАЖНО: если пользователь упоминает производителя (Intel, AMD, Nvidia), передай его в preference!
+   - Примеры:
+     - "замени на интел" → get_alternatives(component_type="cpu", preference="intel")
+     - "хочу видеокарту nvidia" → get_alternatives(component_type="gpu", preference="nvidia")
+     - "процессор AMD" → get_alternatives(component_type="cpu", preference="amd")
 
 5. **select_item** - выбор из списка:
    - "1", "2", "первый", "выбираю второй", "беру третий"
@@ -451,9 +456,7 @@ class Orchestrator:
         """Format component alternatives - DETERMINISTIC."""
         alts = data.get("alternatives", [])
         comp_type = data.get("component_type", "компонента")
-
-        if not alts:
-            return f"Альтернативы для {comp_type} не найдены."
+        warning = data.get("warning")
 
         component_names = {
             "cpu": "процессора",
@@ -466,7 +469,18 @@ class Orchestrator:
         }
         display_name = component_names.get(comp_type, comp_type)
 
-        lines = [f"**Альтернативы для {display_name}:**\n"]
+        # Show warning first if present (e.g., platform change warning)
+        lines = []
+        if warning:
+            lines.append(warning)
+            lines.append("")
+
+        if not alts:
+            if warning:
+                return "\n".join(lines)
+            return f"Альтернативы для {display_name} не найдены."
+
+        lines.append(f"**Альтернативы для {display_name}:**\n")
         for i, p in enumerate(alts[:5], 1):
             name = p.get("name", "")[:65]
             price = p.get("price", 0)
