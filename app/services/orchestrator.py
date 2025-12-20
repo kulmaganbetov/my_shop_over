@@ -218,7 +218,25 @@ class Orchestrator:
 
         data = tool_result.get("data", {})
 
-        # Some responses can be formatted without LLM
+        # CRITICAL: Use deterministic formatting for PC builds to prevent hallucination
+        if tool_name in ["build_pc", "modify_build"]:
+            return self._format_pc_build(data)
+
+        if tool_name == "get_alternatives":
+            return self._format_alternatives(data)
+
+        if tool_name == "select_item":
+            return self._format_selection(data)
+
+        if tool_name == "add_peripheral":
+            return self._format_peripherals(data)
+
+        if tool_name == "search_products":
+            return self._format_search_results(data)
+
+        if tool_name == "show_current_build":
+            return self._format_pc_build(data.get("current_build", data))
+
         if tool_name == "get_delivery_info":
             return self._format_delivery_info(data)
 
@@ -357,6 +375,177 @@ class Orchestrator:
             return "\n".join(lines)
 
         return "Готово! Чем ещё могу помочь?"
+
+    def _format_pc_build(self, data: dict) -> str:
+        """Format PC build response - DETERMINISTIC, no LLM."""
+        build = data.get("build", {})
+        if not build:
+            return "Не удалось собрать ПК. Попробуйте изменить бюджет."
+
+        lines = ["**Ваша сборка ПК:**\n"]
+        total = 0
+
+        # Component display order and names
+        component_names = {
+            "cpu": "Процессор",
+            "motherboard": "Материнская плата",
+            "ram": "Оперативная память",
+            "gpu": "Видеокарта",
+            "storage": "Накопитель",
+            "psu": "Блок питания",
+            "case": "Корпус",
+            "cooler": "Кулер",
+        }
+
+        for comp_type in ["cpu", "motherboard", "ram", "gpu", "storage", "psu", "case", "cooler"]:
+            comp = build.get(comp_type)
+            if comp:
+                name = comp.get("name", "")[:70]
+                price = comp.get("price", 0)
+                discount = comp.get("discount_price", 0)
+                total += discount or price
+                display_name = component_names.get(comp_type, comp_type.upper())
+                lines.append(f"• **{display_name}**: {name}")
+                lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+
+        # Add peripherals if present
+        peripherals = data.get("peripherals", {})
+        if peripherals:
+            lines.append("\n**Периферия:**")
+            for ptype, p in peripherals.items():
+                if p:
+                    name = p.get("name", "")[:50]
+                    price = p.get("price", 0)
+                    discount = p.get("discount_price", 0)
+                    total += discount or price
+                    lines.append(f"• {ptype}: {name}")
+                    lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
+
+        lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
+
+        # Show warnings
+        warnings = data.get("warnings", [])
+        if warnings:
+            lines.append("\n⚠️ **Предупреждения:**")
+            for w in warnings:
+                lines.append(f"• {w}")
+
+        # Show compatibility notes
+        compat_notes = data.get("compatibility_notes", [])
+        if compat_notes:
+            lines.append("\n❌ **Проблемы совместимости:**")
+            for note in compat_notes:
+                lines.append(f"• {note}")
+
+        return "\n".join(lines)
+
+    def _format_alternatives(self, data: dict) -> str:
+        """Format component alternatives - DETERMINISTIC."""
+        alts = data.get("alternatives", [])
+        comp_type = data.get("component_type", "компонента")
+
+        if not alts:
+            return f"Альтернативы для {comp_type} не найдены."
+
+        component_names = {
+            "cpu": "процессора",
+            "motherboard": "материнской платы",
+            "ram": "оперативной памяти",
+            "gpu": "видеокарты",
+            "storage": "накопителя",
+            "psu": "блока питания",
+            "case": "корпуса",
+        }
+        display_name = component_names.get(comp_type, comp_type)
+
+        lines = [f"**Альтернативы для {display_name}:**\n"]
+        for i, p in enumerate(alts[:5], 1):
+            name = p.get("name", "")[:65]
+            price = p.get("price", 0)
+            discount = p.get("discount_price", 0)
+            lines.append(f"{i}. {name}")
+            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+
+        lines.append("Выберите номер для замены.")
+        return "\n".join(lines)
+
+    def _format_selection(self, data: dict) -> str:
+        """Format item selection response - DETERMINISTIC."""
+        action = data.get("action", "")
+        selected = data.get("selected", {})
+
+        if action == "replaced_component":
+            # Show the updated build
+            current_build = data.get("current_build", {})
+            if current_build:
+                return self._format_pc_build(current_build)
+            name = selected.get("name", "")
+            return f"✅ Компонент заменён: {name}"
+
+        if action == "added_peripheral":
+            current_build = data.get("current_build", {})
+            if current_build:
+                return self._format_pc_build(current_build)
+            name = selected.get("name", "")
+            return f"✅ Добавлено: {name}"
+
+        # General selection
+        name = selected.get("name", "товар")
+        price = selected.get("price", 0)
+        discount = selected.get("discount_price", 0)
+        return f"✅ Выбран: {name}\nРассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸"
+
+    def _format_peripherals(self, data: dict) -> str:
+        """Format peripherals list - DETERMINISTIC."""
+        perips = data.get("peripherals", [])
+        ptype = data.get("peripheral_type", "периферия")
+
+        peripheral_names = {
+            "mouse": "Мыши",
+            "keyboard": "Клавиатуры",
+            "monitor": "Мониторы",
+            "headset": "Гарнитуры",
+            "mousepad": "Коврики",
+            "webcam": "Веб-камеры",
+        }
+        display_name = peripheral_names.get(ptype, ptype)
+
+        if not perips:
+            return f"{display_name} не найдены в наличии."
+
+        lines = [f"**{display_name} в наличии:**\n"]
+        for i, p in enumerate(perips[:5], 1):
+            name = p.get("name", "")[:60]
+            price = p.get("price", 0)
+            discount = p.get("discount_price", 0)
+            lines.append(f"{i}. {name}")
+            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+
+        lines.append("Выберите номер для добавления к сборке.")
+        return "\n".join(lines)
+
+    def _format_search_results(self, data: dict) -> str:
+        """Format search results - DETERMINISTIC."""
+        products = data.get("products", [])
+        query = data.get("query", "")
+
+        if not products:
+            return f"По запросу '{query}' товары не найдены. Попробуйте изменить запрос."
+
+        lines = [f"**Результаты поиска '{query}':**\n"]
+        for i, p in enumerate(products[:5], 1):
+            name = p.get("name", "")[:60]
+            price = p.get("price", 0)
+            discount = p.get("discount_price", 0)
+            stock = p.get("stock", 0)
+            lines.append(f"{i}. {name}")
+            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
+            if stock > 0:
+                lines.append(f"   В наличии: {stock} шт.\n")
+            else:
+                lines.append(f"   Нет в наличии\n")
+
+        return "\n".join(lines)
 
     def _format_context(self, context: dict) -> str:
         """Format context for the prompt."""

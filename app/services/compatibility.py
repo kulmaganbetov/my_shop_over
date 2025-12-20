@@ -77,13 +77,13 @@ GPU_POWER_REQUIREMENTS = {
 # Budget allocation percentages for different purposes
 BUDGET_ALLOCATION = {
     "gaming": {
-        "cpu": 0.20,
-        "gpu": 0.40,
-        "motherboard": 0.10,
-        "ram": 0.08,
+        "cpu": 0.18,
+        "gpu": 0.38,
+        "motherboard": 0.12,
+        "ram": 0.12,  # DDR5 needs more budget
         "storage": 0.08,
-        "psu": 0.07,
-        "case": 0.07,
+        "psu": 0.06,
+        "case": 0.06,
     },
     "work": {
         "cpu": 0.30,
