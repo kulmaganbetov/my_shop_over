@@ -106,35 +106,38 @@ class PCBuildService:
         purpose: str,
         params: PCBuildParams,
     ) -> PCBuildResult:
-        """Build PC with STRICT compatibility checks.
+        """Build PC with STRICT compatibility and BUDGET checks.
 
         Pipeline: CPU → MB → RAM → GPU → PSU → Case → Storage
+        STRICT: Total must not exceed budget!
         """
         budget_allocation = self.compatibility_engine.allocate_budget(budget, purpose)
 
         build = {}
         total_price = 0
+        remaining_budget = budget  # Track remaining budget strictly
         warnings = []
         compatibility_notes = []
 
         # ============================================
-        # Step 1: SELECT CPU
+        # Step 1: SELECT CPU (use remaining budget tracking)
         # ============================================
-        cpu_budget = budget_allocation.get("cpu", 0)
+        cpu_budget = min(budget_allocation.get("cpu", 0), remaining_budget)
         cpu, cpu_specs, cpu_price = await self._select_cpu(cpu_budget, purpose)
 
         if not cpu:
             warnings.append("cpu: не найден подходящий процессор")
-            cpu_specs = CPUSpecs()  # Empty specs
+            cpu_specs = CPUSpecs()
         else:
             build["cpu"] = ProductSchema.model_validate(cpu)
             total_price += cpu_price
-            logger.info(f"Selected CPU: {cpu.name}, socket: {cpu_specs.socket}")
+            remaining_budget -= cpu_price
+            logger.info(f"Selected CPU: {cpu.name}, price: {cpu_price}, remaining: {remaining_budget}")
 
         # ============================================
         # Step 2: SELECT MOTHERBOARD (must match CPU socket)
         # ============================================
-        mb_budget = budget_allocation.get("motherboard", 0)
+        mb_budget = min(budget_allocation.get("motherboard", 0), remaining_budget)
         mb, mb_specs, mb_price = await self._select_motherboard(mb_budget, cpu_specs)
 
         if not mb:
@@ -143,12 +146,13 @@ class PCBuildService:
         else:
             build["motherboard"] = ProductSchema.model_validate(mb)
             total_price += mb_price
-            logger.info(f"Selected MB: {mb.name}, socket: {mb_specs.socket}, RAM: {mb_specs.ram_type}")
+            remaining_budget -= mb_price
+            logger.info(f"Selected MB: {mb.name}, price: {mb_price}, remaining: {remaining_budget}")
 
         # ============================================
         # Step 3: SELECT RAM (must match MB RAM type)
         # ============================================
-        ram_budget = budget_allocation.get("ram", 0)
+        ram_budget = min(budget_allocation.get("ram", 0), remaining_budget)
         ram, ram_specs, ram_price = await self._select_ram(ram_budget, mb_specs, cpu_specs)
 
         if not ram:
@@ -156,12 +160,15 @@ class PCBuildService:
         else:
             build["ram"] = ProductSchema.model_validate(ram)
             total_price += ram_price
-            logger.info(f"Selected RAM: {ram.name}, type: {ram_specs.ram_type}")
+            remaining_budget -= ram_price
+            logger.info(f"Selected RAM: {ram.name}, price: {ram_price}, remaining: {remaining_budget}")
 
         # ============================================
-        # Step 4: SELECT GPU
+        # Step 4: SELECT GPU (biggest budget item - use what's left wisely)
         # ============================================
-        gpu_budget = budget_allocation.get("gpu", 0)
+        # Reserve budget for PSU, Case, Storage (roughly 15% of original)
+        reserved_for_rest = int(budget * 0.15)
+        gpu_budget = min(budget_allocation.get("gpu", 0), remaining_budget - reserved_for_rest)
         gpu, gpu_specs, gpu_price = await self._select_gpu(gpu_budget, purpose)
 
         if not gpu:
@@ -169,12 +176,15 @@ class PCBuildService:
         else:
             build["gpu"] = ProductSchema.model_validate(gpu)
             total_price += gpu_price
-            logger.info(f"Selected GPU: {gpu.name}")
+            remaining_budget -= gpu_price
+            logger.info(f"Selected GPU: {gpu.name}, price: {gpu_price}, remaining: {remaining_budget}")
 
         # ============================================
         # Step 5: SELECT PSU (must support total TDP)
         # ============================================
-        psu_budget = budget_allocation.get("psu", 0)
+        # Divide remaining budget proportionally between PSU, Case, Storage
+        # PSU ~40%, Case ~30%, Storage ~30% of remaining
+        psu_budget = min(int(remaining_budget * 0.4), remaining_budget)
         total_tdp = (cpu_specs.tdp if cpu_specs else 65) + (gpu_specs.tdp if gpu_specs else 200) + 100
         psu, psu_specs, psu_price = await self._select_psu(psu_budget, total_tdp)
 
@@ -183,12 +193,14 @@ class PCBuildService:
         else:
             build["psu"] = ProductSchema.model_validate(psu)
             total_price += psu_price
-            logger.info(f"Selected PSU: {psu.name}, wattage: {psu_specs.wattage}W")
+            remaining_budget -= psu_price
+            logger.info(f"Selected PSU: {psu.name}, wattage: {psu_specs.wattage}W, remaining: {remaining_budget}")
 
         # ============================================
         # Step 6: SELECT CASE
         # ============================================
-        case_budget = budget_allocation.get("case", 0)
+        # Use ~50% of remaining budget for case
+        case_budget = min(int(remaining_budget * 0.5), remaining_budget)
         case_product, case_price = await self._select_case(case_budget, gpu_specs)
 
         if not case_product:
@@ -196,11 +208,14 @@ class PCBuildService:
         else:
             build["case"] = ProductSchema.model_validate(case_product)
             total_price += case_price
+            remaining_budget -= case_price
+            logger.info(f"Selected Case: {case_product.name}, remaining: {remaining_budget}")
 
         # ============================================
         # Step 7: SELECT STORAGE
         # ============================================
-        storage_budget = budget_allocation.get("storage", 0)
+        # Use all remaining budget for storage
+        storage_budget = remaining_budget
         storage, storage_price = await self._select_storage(storage_budget)
 
         if not storage:
@@ -208,6 +223,18 @@ class PCBuildService:
         else:
             build["storage"] = ProductSchema.model_validate(storage)
             total_price += storage_price
+            remaining_budget -= storage_price
+            logger.info(f"Selected Storage: {storage.name}, remaining: {remaining_budget}")
+
+        # ============================================
+        # STRICT BUDGET CHECK: Total must not exceed budget!
+        # ============================================
+        if total_price > budget:
+            logger.warning(f"Build exceeds budget! {total_price} > {budget}, downgrading...")
+            # Try to find cheaper alternatives for flexible components
+            build, total_price = await self._downgrade_to_fit_budget(
+                build, total_price, budget, purpose
+            )
 
         # ============================================
         # Validate final build compatibility
@@ -305,7 +332,7 @@ class PCBuildService:
 
         products = await self.product_repo.get_by_component_type(
             component_type=component_type,
-            max_price=int(budget * 1.5),  # Allow some overflow for compatibility
+            max_price=budget,  # Strict budget - no overflow
             in_stock_only=True,
             limit=50,
             search_keywords=keywords,
@@ -596,6 +623,91 @@ class PCBuildService:
             return best_storage, best_price
 
         return None, 0
+
+    async def _downgrade_to_fit_budget(
+        self,
+        build: dict,
+        current_total: int,
+        budget: int,
+        purpose: str,
+    ) -> tuple[dict, int]:
+        """Try to downgrade components to fit within budget.
+
+        Priority for downgrade (least impact on performance):
+        1. Storage (can get smaller/slower SSD)
+        2. Case (aesthetics only)
+        3. PSU (if still meets TDP requirements)
+        """
+        excess = current_total - budget
+        if excess <= 0:
+            return build, current_total
+
+        logger.info(f"Need to save {excess}₸ to fit budget")
+
+        # Try downgrading storage first
+        storage = build.get("storage")
+        if storage:
+            storage_price = storage.discount_price or storage.price or 0
+            target_storage_price = max(storage_price - excess - 5000, 10000)  # Min 10k
+
+            cheaper_storage, cheaper_price = await self._select_storage(target_storage_price)
+            if cheaper_storage and cheaper_price < storage_price:
+                saved = storage_price - cheaper_price
+                build["storage"] = ProductSchema.model_validate(cheaper_storage)
+                current_total -= saved
+                excess -= saved
+                logger.info(f"Downgraded storage, saved {saved}₸")
+
+        if excess <= 0:
+            return build, current_total
+
+        # Try downgrading case
+        case = build.get("case")
+        if case:
+            case_price = case.discount_price or case.price or 0
+            target_case_price = max(case_price - excess - 5000, 15000)  # Min 15k
+
+            cheaper_case, cheaper_case_price = await self._select_case(target_case_price, None)
+            if cheaper_case and cheaper_case_price < case_price:
+                saved = case_price - cheaper_case_price
+                build["case"] = ProductSchema.model_validate(cheaper_case)
+                current_total -= saved
+                excess -= saved
+                logger.info(f"Downgraded case, saved {saved}₸")
+
+        if excess <= 0:
+            return build, current_total
+
+        # Try downgrading PSU (be careful about TDP)
+        psu = build.get("psu")
+        if psu:
+            psu_price = psu.discount_price or psu.price or 0
+            target_psu_price = max(psu_price - excess - 3000, 15000)
+
+            # Need to calculate TDP requirement
+            cpu = build.get("cpu")
+            gpu = build.get("gpu")
+            cpu_tdp = 65
+            gpu_tdp = 200
+            if cpu:
+                cpu_specs = self.specs_extractor.extract_cpu_specs(cpu.name or "", {})
+                cpu_tdp = cpu_specs.tdp or 65
+            if gpu:
+                gpu_specs = self.specs_extractor.extract_gpu_specs(gpu.name or "", {})
+                gpu_tdp = gpu_specs.tdp if gpu_specs else 200
+
+            total_tdp = cpu_tdp + gpu_tdp + 100
+
+            cheaper_psu, cheaper_psu_specs, cheaper_psu_price = await self._select_psu(
+                target_psu_price, total_tdp
+            )
+            if cheaper_psu and cheaper_psu_price < psu_price:
+                saved = psu_price - cheaper_psu_price
+                build["psu"] = ProductSchema.model_validate(cheaper_psu)
+                current_total -= saved
+                logger.info(f"Downgraded PSU, saved {saved}₸")
+
+        return build, current_total
 
     async def get_component_alternatives(
         self,
