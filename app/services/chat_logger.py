@@ -143,6 +143,14 @@ class ChatLogger:
 
         sessions = []
         for row in result.all():
+            # Get ChatSession to get status
+            chat_session_result = await self.session.execute(
+                select(ChatSession).where(ChatSession.session_id == row.session_id)
+            )
+            chat_session = chat_session_result.scalar_one_or_none()
+            status = chat_session.status if chat_session else "bot"
+            escalation_reason = chat_session.escalation_reason if chat_session else None
+
             # Get first and last user message
             msgs_result = await self.session.execute(
                 select(ChatMessage)
@@ -170,6 +178,8 @@ class ChatLogger:
 
             sessions.append({
                 "session_id": row.session_id,
+                "status": status,
+                "escalation_reason": escalation_reason,
                 "first_message_time": row.first_msg_time.isoformat() if row.first_msg_time else None,
                 "last_message_time": row.last_msg_time.isoformat() if row.last_msg_time else None,
                 "message_count": row.msg_count,

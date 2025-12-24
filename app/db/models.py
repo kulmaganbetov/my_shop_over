@@ -125,6 +125,8 @@ class ChatSession(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="bot")  # bot, waiting_manager, closed
+    escalation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     context: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

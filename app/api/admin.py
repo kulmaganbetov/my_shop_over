@@ -315,26 +315,35 @@ async def send_manager_reply(
     session_id: str,
     request: ManagerMessageRequest,
     admin: AdminUser = Depends(require_admin),
-    session: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_async_session),
 ):
     """Send a manager reply to a customer session."""
+    from app.db.repositories import ChatRepository
+
     # Add manager message to manager_chats
     manager_msg = ManagerChat(
         session_id=session_id,
         manager_id=admin.id,
         message=request.message,
     )
-    session.add(manager_msg)
+    db.add(manager_msg)
 
     # Also add to chat_messages for the customer to see
     chat_msg = ChatMessage(
         session_id=session_id,
         role="manager",
-        content=f"[Менеджер {admin.full_name or admin.username}]: {request.message}",
+        content=f"👤 **Менеджер {admin.full_name or admin.username}**: {request.message}",
         intent="manager_reply",
     )
-    session.add(chat_msg)
-    await session.commit()
+    db.add(chat_msg)
+
+    # Resolve escalation - change status back to "bot"
+    chat_repo = ChatRepository(db)
+    await chat_repo.resolve_escalation(session_id, "bot")
+
+    await db.commit()
+
+    logger.info(f"[MANAGER] {admin.username} replied to session {session_id}")
 
     return {"success": True, "message_id": manager_msg.id}
 
@@ -590,52 +599,98 @@ async def get_session_summary(
 async def get_manager_requests(
     limit: int = Query(50, ge=1, le=200),
     admin: AdminUser = Depends(require_admin),
-    session: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_async_session),
 ):
-    """Get all sessions where manager was requested."""
-    from app.services.chat_logger import ChatLogger
+    """Get all sessions waiting for manager response."""
+    from app.db.repositories import ChatRepository
 
-    chat_logger = ChatLogger(session)
-    sessions = await chat_logger.get_all_sessions(
-        limit=limit,
-        manager_only=True,
+    chat_repo = ChatRepository(db)
+    waiting_sessions = await chat_repo.get_sessions_waiting_manager()
+
+    sessions_data = []
+    for s in waiting_sessions[:limit]:
+        # Get all messages for count and first user message
+        messages = await chat_repo.get_session_messages(s.session_id, limit=100)
+        user_messages = [m for m in messages if m.role == "user"]
+        first_user_message = user_messages[0].content[:80] if user_messages else ""
+        last_message_time = messages[-1].created_at if messages else s.updated_at
+
+        sessions_data.append({
+            "session_id": s.session_id,
+            "status": s.status,
+            "escalation_reason": s.escalation_reason,
+            "message_count": len(messages),
+            "first_user_message": first_user_message,
+            "last_message_time": last_message_time.isoformat() if last_message_time else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+
+    return {
+        "waiting_manager": sessions_data,
+        "count": len(sessions_data),
+        "urgent": len([s for s in sessions_data]),  # All are urgent
+    }
+
+
+@router.get("/manager-queue")
+async def get_manager_queue_count(
+    admin: AdminUser = Depends(require_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Get count of sessions waiting for manager - for notifications."""
+    result = await db.execute(
+        select(func.count(ChatSession.id))
+        .where(ChatSession.status == "waiting_manager")
     )
-    return {"manager_requests": sessions, "count": len(sessions)}
+    count = result.scalar_one()
+
+    return {
+        "waiting_count": count,
+        "has_urgent": count > 0,
+    }
 
 
 @router.get("/stats")
 async def get_admin_stats(
     admin: AdminUser = Depends(require_admin),
-    session: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_async_session),
 ):
     """Get statistics for admin dashboard."""
     # Count total sessions
-    sessions_count = await session.execute(
+    sessions_count = await db.execute(
         select(func.count(ChatSession.id))
     )
     total_sessions = sessions_count.scalar_one()
 
+    # Count sessions waiting for manager (URGENT!)
+    waiting_count = await db.execute(
+        select(func.count(ChatSession.id))
+        .where(ChatSession.status == "waiting_manager")
+    )
+    waiting_manager = waiting_count.scalar_one()
+
     # Count total messages
-    messages_count = await session.execute(
+    messages_count = await db.execute(
         select(func.count(ChatMessage.id))
     )
     total_messages = messages_count.scalar_one()
 
     # Count products
-    products_count = await session.execute(
+    products_count = await db.execute(
         select(func.count(Product.id))
     )
     total_products = products_count.scalar_one()
 
-    # Count manager requests
-    manager_count = await session.execute(
+    # Count manager requests (historical)
+    manager_count = await db.execute(
         select(func.count(ChatMessage.id))
         .where(ChatMessage.intent == "call_manager")
     )
     total_manager_requests = manager_count.scalar_one()
 
     # Get intent distribution
-    intent_dist = await session.execute(
+    intent_dist = await db.execute(
         select(ChatMessage.intent, func.count(ChatMessage.id))
         .where(ChatMessage.intent.isnot(None))
         .group_by(ChatMessage.intent)
@@ -645,6 +700,7 @@ async def get_admin_stats(
 
     return {
         "total_sessions": total_sessions,
+        "waiting_manager": waiting_manager,  # Urgent - show prominently!
         "total_messages": total_messages,
         "total_products": total_products,
         "total_manager_requests": total_manager_requests,

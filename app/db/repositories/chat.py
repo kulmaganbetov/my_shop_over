@@ -86,3 +86,52 @@ class ChatRepository(BaseRepository[ChatSession]):
         )
         messages = list(result.scalars().all())
         return list(reversed(messages))
+
+    async def escalate_to_manager(
+        self,
+        session_id: str,
+        reason: str,
+    ) -> ChatSession:
+        """Escalate session to manager."""
+        chat_session = await self.get_or_create_session(session_id)
+        chat_session.status = "waiting_manager"
+        chat_session.escalation_reason = reason
+        await self.session.commit()
+        await self.session.refresh(chat_session)
+        return chat_session
+
+    async def resolve_escalation(
+        self,
+        session_id: str,
+        new_status: str = "bot",
+    ) -> ChatSession:
+        """Resolve escalation - manager responded."""
+        chat_session = await self.get_session_by_id(session_id)
+        if chat_session:
+            chat_session.status = new_status
+            await self.session.commit()
+            await self.session.refresh(chat_session)
+        return chat_session
+
+    async def get_sessions_waiting_manager(self) -> list[ChatSession]:
+        """Get all sessions waiting for manager response."""
+        result = await self.session.execute(
+            select(ChatSession)
+            .where(ChatSession.status == "waiting_manager")
+            .order_by(ChatSession.updated_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_all_active_sessions(self, limit: int = 50) -> list[ChatSession]:
+        """Get all active sessions sorted by status priority."""
+        result = await self.session.execute(
+            select(ChatSession)
+            .where(ChatSession.status != "closed")
+            .order_by(
+                # waiting_manager first, then by updated_at
+                ChatSession.status.desc(),
+                ChatSession.updated_at.desc()
+            )
+            .limit(limit)
+        )
+        return list(result.scalars().all())

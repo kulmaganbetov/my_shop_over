@@ -398,27 +398,19 @@ class ToolExecutor:
         }
 
     async def _tool_call_manager(self, params: dict, session_id: str) -> dict:
-        """Request manager callback."""
+        """Escalate to manager - set session status to waiting_manager."""
         reason = params.get("reason", "запрос клиента")
 
-        context = await self._get_context(session_id)
-        awaiting = context.get("awaiting_manager_confirmation", False)
+        # Escalate session to manager
+        await self.chat_repo.escalate_to_manager(session_id, reason)
 
-        if not awaiting:
-            # First request - ask for confirmation
-            await self._update_context(session_id, {
-                "awaiting_manager_confirmation": True,
-                "manager_reason": reason,
-            })
-            return {"status": "awaiting_confirmation"}
-        else:
-            # Confirmed
-            await self._update_context(session_id, {
-                "awaiting_manager_confirmation": False,
-                "manager_requested": True,
-            })
-            logger.warning(f"[MANAGER_REQUEST] session={session_id} reason={reason}")
-            return {"status": "confirmed", "reason": reason}
+        logger.warning(f"[MANAGER] Session {session_id} escalated: {reason}")
+
+        return {
+            "status": "escalated",
+            "reason": reason,
+            "message": "Диалог передан менеджеру",
+        }
 
     async def _tool_answer_faq(self, params: dict, session_id: str) -> dict:
         """Answer FAQ question."""

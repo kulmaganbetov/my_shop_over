@@ -164,7 +164,26 @@ class Orchestrator:
     ) -> ChatResponse:
         """Process user message using LLM orchestration."""
         # Ensure session exists
-        await self.chat_repo.get_or_create_session(session_id)
+        chat_session = await self.chat_repo.get_or_create_session(session_id)
+
+        # CRITICAL: Check if session is waiting for manager
+        if chat_session.status == "waiting_manager":
+            # Store user message but don't process with bot
+            await self.chat_repo.add_message(
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+            logger.info(f"[BLOCKED] Session {session_id} waiting for manager, message stored")
+
+            return ChatResponse(
+                message="⏳ Ваш диалог передан менеджеру. Ожидайте ответа.\n\n"
+                        "Менеджер ответит вам в ближайшее время.\n"
+                        "📞 Срочно: +7 771 013-00-20",
+                intent=Intent.GENERAL,
+                session_id=session_id,
+                data={"status": "waiting_manager"},
+            )
 
         # Get chat history and context
         chat_history = await self._get_chat_history(session_id)
@@ -381,17 +400,18 @@ class Orchestrator:
         return "\n".join(lines)
 
     def _format_manager_response(self, data: dict) -> str:
-        """Format manager callback response."""
+        """Format manager escalation response."""
         status = data.get("status")
-        if status == "awaiting_confirmation":
-            return ("Вы хотите связаться с менеджером?\n\n"
-                    "📞 Интернет-магазин: +7 771 013-00-20\n"
-                    "📱 Kaspi заказы: +7 775 894-93-84\n\n"
-                    "Напишите 'Да' и менеджер свяжется с вами, или позвоните сами.")
-        elif status == "confirmed":
-            return ("✅ Заявка принята! Менеджер свяжется с вами в ближайшее время.\n\n"
-                    "📞 Можете позвонить сами: +7 771 013-00-20\n"
-                    "🕐 Время работы: Пн-Пт 9:00-19:00")
+        reason = data.get("reason", "")
+
+        if status == "escalated":
+            return (
+                "🔔 **Диалог передан менеджеру**\n\n"
+                "Менеджер ответит вам в ближайшее время.\n"
+                "Все ваши сообщения будут сохранены.\n\n"
+                "📞 Срочный вопрос: +7 771 013-00-20\n"
+                "🕐 Время работы: Пн-Пт 9:00-19:00"
+            )
         return "Чем могу помочь?"
 
     async def _generate_general_response(self, message: str, chat_history: str) -> str:

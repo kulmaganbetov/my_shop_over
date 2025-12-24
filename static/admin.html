@@ -287,6 +287,78 @@
         .stat-icon.red { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); }
         .stat-icon svg { width: 20px; height: 20px; }
 
+        /* Status badges */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-badge.waiting {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            animation: pulse-bg 2s ease-in-out infinite;
+        }
+        .status-badge.bot {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+        }
+        .status-badge.closed {
+            background: rgba(100, 116, 139, 0.1);
+            color: var(--text-secondary);
+        }
+        @keyframes pulse-bg {
+            0%, 100% { background: rgba(239, 68, 68, 0.15); }
+            50% { background: rgba(239, 68, 68, 0.3); }
+        }
+
+        /* Pulsing nav badge */
+        .nav-badge.urgent {
+            animation: pulse-badge 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-badge {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+        }
+
+        /* Escalation reason tooltip */
+        .escalation-reason {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+        /* Urgent row highlight */
+        tr.urgent-row td {
+            background: rgba(239, 68, 68, 0.05) !important;
+        }
+        tr.urgent-row:hover td {
+            background: rgba(239, 68, 68, 0.1) !important;
+        }
+
+        /* Warning banner */
+        .warning-banner {
+            background: linear-gradient(90deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+            border: 1px solid var(--accent-red);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--accent-red);
+            font-weight: 500;
+        }
+        .warning-banner svg {
+            width: 24px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
         .stat-value { font-size: 28px; font-weight: 700; }
         .stat-label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
 
@@ -610,6 +682,7 @@
                         <thead>
                             <tr>
                                 <th>ID сессии</th>
+                                <th>Статус</th>
                                 <th>Первое сообщение</th>
                                 <th>Сообщений</th>
                                 <th>Время</th>
@@ -617,7 +690,7 @@
                             </tr>
                         </thead>
                         <tbody id="sessions-table">
-                            <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
+                            <tr><td colspan="6" class="loading"><div class="spinner"></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -632,19 +705,28 @@
                     </div>
                 </div>
 
+                <div class="warning-banner" id="urgent-banner" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <span id="urgent-banner-text">Есть клиенты, ожидающие ответа менеджера!</span>
+                </div>
+
                 <div class="table-card">
                     <table>
                         <thead>
                             <tr>
                                 <th>ID сессии</th>
-                                <th>Первое сообщение</th>
+                                <th>Статус</th>
+                                <th>Причина</th>
                                 <th>Сообщений</th>
                                 <th>Время</th>
                                 <th>Действия</th>
                             </tr>
                         </thead>
                         <tbody id="manager-table">
-                            <tr><td colspan="5" class="loading"><div class="spinner"></div></td></tr>
+                            <tr><td colspan="6" class="loading"><div class="spinner"></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -830,12 +912,29 @@
                 document.getElementById('stat-sessions').textContent = data.total_sessions || 0;
                 document.getElementById('stat-messages').textContent = data.total_messages || 0;
                 document.getElementById('stat-products').textContent = data.total_products || 0;
-                document.getElementById('stat-manager').textContent = data.total_manager_requests || 0;
-                document.getElementById('manager-badge').textContent = data.total_manager_requests || 0;
+                document.getElementById('stat-manager').textContent = data.waiting_manager || 0;
+
+                const badge = document.getElementById('manager-badge');
+                const waitingCount = data.waiting_manager || 0;
+                badge.textContent = waitingCount;
+
+                // Add urgent pulse animation if there are waiting sessions
+                if (waitingCount > 0) {
+                    badge.classList.add('urgent');
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.classList.remove('urgent');
+                    badge.style.display = waitingCount > 0 ? 'inline-block' : 'none';
+                }
             } catch (e) {
                 console.error('Error loading stats:', e);
             }
         }
+
+        // Auto-refresh stats every 30 seconds
+        setInterval(() => {
+            if (currentUser) loadStats();
+        }, 30000);
 
         async function loadSessions() {
             try {
@@ -851,27 +950,82 @@
             try {
                 const res = await fetch(`${API_URL}/manager-requests?limit=50`, { credentials: 'include' });
                 const data = await res.json();
-                renderSessionsTable('manager-table', data.manager_requests || []);
+                renderManagerTable(data.waiting_manager || []);
             } catch (e) {
                 console.error('Error loading manager requests:', e);
             }
         }
 
+        function getStatusBadge(status) {
+            const labels = {
+                'waiting_manager': '<span class="status-badge waiting">⚠️ Ожидает</span>',
+                'bot': '<span class="status-badge bot">🤖 Бот</span>',
+                'closed': '<span class="status-badge closed">✓ Закрыт</span>'
+            };
+            return labels[status] || '<span class="status-badge bot">🤖 Бот</span>';
+        }
+
         function renderSessionsTable(tableId, sessions) {
             const table = document.getElementById(tableId);
             if (!sessions.length) {
-                table.innerHTML = '<tr><td colspan="5" class="empty-state">Нет данных</td></tr>';
+                table.innerHTML = '<tr><td colspan="6" class="empty-state">Нет данных</td></tr>';
                 return;
             }
-            table.innerHTML = sessions.map(s => `
-                <tr>
+            // Sort: waiting_manager first
+            sessions.sort((a, b) => {
+                if (a.status === 'waiting_manager' && b.status !== 'waiting_manager') return -1;
+                if (a.status !== 'waiting_manager' && b.status === 'waiting_manager') return 1;
+                return 0;
+            });
+            table.innerHTML = sessions.map(s => {
+                const isUrgent = s.status === 'waiting_manager';
+                return `
+                <tr class="${isUrgent ? 'urgent-row' : ''}">
                     <td style="font-family:monospace;font-size:12px;">${(s.session_id || '').substring(0, 16)}...</td>
+                    <td>${getStatusBadge(s.status)}</td>
                     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.first_user_message || '-')}</td>
                     <td>${s.message_count || 0}</td>
                     <td>${formatDate(s.last_message_time)}</td>
                     <td><button class="btn btn-sm btn-primary" onclick="viewSession('${s.session_id}')">Просмотр</button></td>
                 </tr>
-            `).join('');
+            `}).join('');
+        }
+
+        function renderManagerTable(sessions) {
+            const table = document.getElementById('manager-table');
+            const banner = document.getElementById('urgent-banner');
+            const waitingCount = sessions.filter(s => s.status === 'waiting_manager').length;
+
+            if (waitingCount > 0) {
+                banner.style.display = 'flex';
+                document.getElementById('urgent-banner-text').textContent =
+                    `${waitingCount} клиент${waitingCount > 1 ? 'ов' : ''} ожида${waitingCount > 1 ? 'ют' : 'ет'} ответа менеджера!`;
+            } else {
+                banner.style.display = 'none';
+            }
+
+            if (!sessions.length) {
+                table.innerHTML = '<tr><td colspan="6" class="empty-state">Нет запросов</td></tr>';
+                return;
+            }
+            // Sort: waiting_manager first
+            sessions.sort((a, b) => {
+                if (a.status === 'waiting_manager' && b.status !== 'waiting_manager') return -1;
+                if (a.status !== 'waiting_manager' && b.status === 'waiting_manager') return 1;
+                return 0;
+            });
+            table.innerHTML = sessions.map(s => {
+                const isUrgent = s.status === 'waiting_manager';
+                return `
+                <tr class="${isUrgent ? 'urgent-row' : ''}">
+                    <td style="font-family:monospace;font-size:12px;">${(s.session_id || '').substring(0, 16)}...</td>
+                    <td>${getStatusBadge(s.status)}</td>
+                    <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;font-size:12px;">${escapeHtml(s.escalation_reason || 'запрос клиента')}</td>
+                    <td>${s.message_count || 0}</td>
+                    <td>${formatDate(s.last_message_time)}</td>
+                    <td><button class="btn btn-sm btn-primary" onclick="viewSession('${s.session_id}')">Ответить</button></td>
+                </tr>
+            `}).join('');
         }
 
         async function viewSession(sessionId) {
