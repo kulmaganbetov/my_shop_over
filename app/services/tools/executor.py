@@ -420,3 +420,30 @@ class ToolExecutor:
     async def _tool_general_response(self, params: dict, session_id: str) -> dict:
         """Handle general conversation."""
         return {"type": "general"}
+
+    async def _tool_clarify_intent(self, params: dict, session_id: str) -> dict:
+        """Ask user to clarify their intent (buy separate vs modify build)."""
+        component = params.get("component", "товар")
+        options = params.get("options", ["replace", "buy_separate"])
+
+        # Map component names
+        component_names = {
+            "cpu": "процессор",
+            "gpu": "видеокарту",
+            "motherboard": "материнскую плату",
+            "ram": "оперативную память",
+            "storage": "накопитель",
+            "psu": "блок питания",
+            "case": "корпус",
+        }
+        display_name = component_names.get(component, component)
+
+        return {
+            "type": "clarification",
+            "component": display_name,
+            "question": f"Уточните, пожалуйста: вы хотите заменить {display_name} в текущей сборке или купить {display_name} отдельно?",
+            "options": [
+                {"key": "replace", "text": f"Заменить {display_name} в сборке"},
+                {"key": "buy_separate", "text": f"Купить {display_name} отдельно"},
+            ],
+        }

@@ -39,36 +39,61 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - "дороже", "дешевле", "более дорогую", "подешевле" (без конкретной суммы)
    - ТОЛЬКО если уже есть сборка в контексте!
 
-3. **search_products** - поиск конкретных товаров:
+3. **search_products** - поиск/покупка товаров ОТДЕЛЬНО от сборки:
    - "покажи видеокарты", "найди мышку", "ноутбуки"
    - "RTX 4070", "мониторы до 200000"
+   - ВАЖНО: Если пользователь говорит "хочу ЕЩЕ купить", "ДОПОЛНИТЕЛЬНО", "ОТДЕЛЬНО" → это search_products!
+   - Примеры search_products:
+     - "хочу еще купить процессор amd" → search_products(query="процессор amd")
+     - "дополнительно купить видеокарту" → search_products(query="видеокарта")
+     - "отдельно нужен монитор" → search_products(query="монитор")
+     - "купить процессор" → search_products(query="процессор")
 
-4. **get_alternatives** - замена компонента в сборке:
-   - "замени видеокарту", "другой процессор", "хочу Intel"
+4. **get_alternatives** - ЗАМЕНА компонента ВНУТРИ текущей сборки:
+   - ТОЛЬКО слова: "замени", "поменяй", "смени", "обнови В СБОРКЕ"
    - ТОЛЬКО если есть сборка!
-   - ВАЖНО: если пользователь упоминает производителя (Intel, AMD, Nvidia), передай его в preference!
-   - Примеры:
-     - "замени на интел" → get_alternatives(component_type="cpu", preference="intel")
-     - "хочу видеокарту nvidia" → get_alternatives(component_type="gpu", preference="nvidia")
-     - "процессор AMD" → get_alternatives(component_type="cpu", preference="amd")
+   - НЕ используй если пользователь говорит "купить", "еще", "дополнительно", "отдельно"!
+   - Примеры get_alternatives:
+     - "замени процессор" → get_alternatives(component_type="cpu")
+     - "поменяй видеокарту на nvidia" → get_alternatives(component_type="gpu", preference="nvidia")
+     - "смени материнку" → get_alternatives(component_type="motherboard")
 
-5. **select_item** - выбор из списка:
+5. **clarify_intent** - когда НЕЯСНО что хочет пользователь:
+   - Если есть сборка И пользователь говорит про компонент без явного "замени" или "купить"
+   - Пример: "процессор intel" (неясно - заменить в сборке или купить отдельно?)
+   - Задай вопрос: "Вы хотите заменить процессор в сборке или купить отдельно?"
+
+6. **select_item** - выбор из списка:
    - "1", "2", "первый", "выбираю второй", "беру третий"
 
-6. **add_peripheral** - добавление периферии:
-   - "добавь мышку", "нужен монитор", "клавиатура"
+7. **add_peripheral** - добавление периферии К СБОРКЕ:
+   - "добавь мышку к сборке", "добавь монитор"
 
-7. **show_current_build** - показать текущую сборку:
+8. **show_current_build** - показать текущую сборку:
    - "покажи сборку", "что выбрано", "моя конфигурация"
 
-8. **get_delivery_info** - информация о доставке:
+9. **get_delivery_info** - информация о доставке:
    - "доставка", "как получить", "оплата"
 
-9. **call_manager** - вызов менеджера:
-   - "позвоните", "нужен менеджер", "хочу поговорить"
+10. **call_manager** - вызов менеджера:
+    - "позвоните", "нужен менеджер", "хочу поговорить"
 
-10. **general_response** - приветствия и общие вопросы:
+11. **general_response** - приветствия и общие вопросы:
     - "привет", "спасибо", "пока"
+
+## КРИТИЧЕСКИ ВАЖНО - разделение интентов:
+
+### Покупка ОТДЕЛЬНО (search_products):
+- Слова-маркеры: "купить", "еще", "дополнительно", "отдельно", "нужен", "хочу"
+- Пример: "хочу еще купить процессор amd ryzen" → search_products!
+
+### Замена В СБОРКЕ (get_alternatives):
+- Слова-маркеры: "замени", "поменяй", "смени", "обнови", "в сборке"
+- Пример: "замени процессор на intel" → get_alternatives!
+
+### Правило приоритета:
+Если есть сборка И пользователь упоминает компонент И есть слова "еще/дополнительно/отдельно/купить":
+→ ВСЕГДА выбирай search_products, НЕ get_alternatives!
 
 ## КРИТИЧЕСКИ ВАЖНО - расчёт бюджета:
 - Если пользователь говорит "добавил X к бюджету" → новый budget = предыдущий бюджет + X
@@ -91,8 +116,8 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
 ## Важно:
 - ВСЕГДА рассчитывай бюджет из контекста если пользователь говорит об изменении
 - Если нет сборки и пользователь хочет "дороже/дешевле" - сначала нужно собрать ПК (build_pc)
-- Если запрос непонятен - используй general_response
-- Для замены компонентов нужна существующая сборка
+- Если запрос непонятен - используй clarify_intent или general_response
+- Для замены компонентов ВНУТРИ сборки нужна существующая сборка
 """
 
 # Response formatting prompt
@@ -255,6 +280,9 @@ class Orchestrator:
 
         if tool_name == "call_manager":
             return self._format_manager_response(data)
+
+        if tool_name == "clarify_intent":
+            return self._format_clarification(data)
 
         if tool_name == "general_response":
             # Use LLM for general responses
@@ -569,6 +597,18 @@ class Orchestrator:
 
         return "\n".join(lines)
 
+    def _format_clarification(self, data: dict) -> str:
+        """Format clarification question - DETERMINISTIC."""
+        question = data.get("question", "Уточните ваш запрос")
+        options = data.get("options", [])
+
+        lines = [question, ""]
+        for opt in options:
+            text = opt.get("text", "")
+            lines.append(f"• {text}")
+
+        return "\n".join(lines)
+
     def _format_context(self, context: dict) -> str:
         """Format context for the prompt."""
         if not context:
@@ -636,6 +676,7 @@ class Orchestrator:
             "get_delivery_info": Intent.DELIVERY_INFO,
             "call_manager": Intent.CALL_MANAGER,
             "answer_faq": Intent.FAQ,
+            "clarify_intent": Intent.GENERAL,  # Use general for clarifications
             "general_response": Intent.GENERAL,
         }
         return mapping.get(tool_name, Intent.GENERAL)
