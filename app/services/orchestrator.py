@@ -315,34 +315,78 @@ class Orchestrator:
             return self._fallback_format(tool_name, data)
 
     def _format_delivery_info(self, data: dict) -> str:
-        """Format delivery info without LLM."""
-        return """**Доставка по Казахстану**
+        """Format delivery and store info - DETERMINISTIC."""
+        stores = data.get("stores", {})
+        online = data.get("online", {})
+        delivery = data.get("delivery", {})
+        payment = data.get("payment", {})
 
-**Алматы:**
-• Бесплатная доставка при заказе от 50,000 ₸
-• Доставка 1-2 рабочих дня
-• Самовывоз из магазина
+        lines = ["**Магазины Over-Shop.kz**\n"]
 
-**Другие города:**
-• Доставка через Казпочту или курьерские службы
-• Срок: 3-7 рабочих дней
+        # Almaty
+        if "almaty" in stores:
+            s = stores["almaty"]
+            lines.append("📍 **Алматы**")
+            lines.append(f"   {s.get('address', '')}")
+            lines.append(f"   🕐 {s.get('hours', '')}")
+            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
+            lines.append("")
 
-**Оплата:**
-• Картой онлайн
-• Рассрочка 0-0-12 от Kaspi
-• Наличными при получении"""
+        # Astana
+        if "astana" in stores:
+            s = stores["astana"]
+            lines.append("📍 **Астана**")
+            lines.append(f"   {s.get('address', '')}")
+            lines.append(f"   🕐 {s.get('hours', '')}")
+            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
+            lines.append("")
+
+        # Pavlodar
+        if "pavlodar" in stores:
+            s = stores["pavlodar"]
+            lines.append("📍 **Павлодар**")
+            lines.append(f"   {s.get('address', '')}")
+            lines.append(f"   🕐 {s.get('hours', '')}")
+            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
+            if s.get("service_center"):
+                lines.append(f"   🔧 Сервис: {s.get('service_center')}")
+            lines.append("")
+
+        # Online contacts
+        lines.append("**Интернет-магазин**")
+        lines.append(f"📞 {online.get('phone', '')}")
+        lines.append(f"📱 Kaspi заказы: {online.get('kaspi_orders', '')}")
+        lines.append(f"✉️ {online.get('email', '')}")
+        lines.append(f"📷 Instagram: {online.get('instagram', '')}")
+        lines.append("")
+
+        # Delivery
+        lines.append("**Доставка**")
+        lines.append(f"• {delivery.get('pickup', '')}")
+        lines.append(f"• {delivery.get('courier', '')}")
+        lines.append(f"• {delivery.get('express', '')}")
+        lines.append(f"• Транспортные компании: {delivery.get('transport', '')}")
+        lines.append("")
+
+        # Payment
+        lines.append("**Оплата**")
+        for method in payment.get("methods", []):
+            lines.append(f"• {method}")
+
+        return "\n".join(lines)
 
     def _format_manager_response(self, data: dict) -> str:
         """Format manager callback response."""
         status = data.get("status")
         if status == "awaiting_confirmation":
-            return ("Вы хотите связаться с менеджером? "
-                    "Менеджер свяжется с вами в ближайшее время.\n\n"
-                    "Напишите 'Да' для подтверждения или 'Нет' чтобы продолжить с ботом.")
+            return ("Вы хотите связаться с менеджером?\n\n"
+                    "📞 Интернет-магазин: +7 771 013-00-20\n"
+                    "📱 Kaspi заказы: +7 775 894-93-84\n\n"
+                    "Напишите 'Да' и менеджер свяжется с вами, или позвоните сами.")
         elif status == "confirmed":
-            return ("Заявка принята! Менеджер свяжется с вами в ближайшее время.\n"
-                    "Время работы: Пн-Пт 9:00-18:00\n\n"
-                    "Пока можете продолжить пользоваться ботом.")
+            return ("✅ Заявка принята! Менеджер свяжется с вами в ближайшее время.\n\n"
+                    "📞 Можете позвонить сами: +7 771 013-00-20\n"
+                    "🕐 Время работы: Пн-Пт 9:00-19:00")
         return "Чем могу помочь?"
 
     async def _generate_general_response(self, message: str, chat_history: str) -> str:

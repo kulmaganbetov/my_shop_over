@@ -358,20 +358,43 @@ class ToolExecutor:
             return {"error": "Нет данных для показа характеристик"}
 
     async def _tool_get_delivery_info(self, params: dict, session_id: str) -> dict:
-        """Get delivery information."""
+        """Get delivery and store information."""
         return {
-            "delivery_info": {
+            "stores": {
                 "almaty": {
-                    "free_from": 50000,
-                    "days": "1-2 рабочих дня",
-                    "pickup": True,
+                    "address": "г. Алматы, проспект Абылай хана, 7 (вход со стороны ул.Тузова)",
+                    "hours": "Пн.-Пт.: 09:00-19:00, Сб.-Вс.: 09:00-17:00 (без перерыва)",
+                    "phones": ["+7 747 601-03-25", "+7 7273 51-28-51"],
                 },
-                "other_cities": {
-                    "method": "Казпочта или курьерские службы",
-                    "days": "3-7 рабочих дней",
+                "astana": {
+                    "address": "г. Астана, проспект Республики, 72 (со стороны Республики)",
+                    "hours": "Пн.-Пт.: 10:00-19:00 (без перерыва), Сб.-Вс.: выходной",
+                    "phones": ["+7 707 956-50-26", "+7 7172 39-52-80"],
                 },
-                "payment": ["Картой онлайн", "Рассрочка 0-0-12 от Kaspi", "Наличными"],
-            }
+                "pavlodar": {
+                    "address": "г. Павлодар, ул. Желтоксан, 7 (бывшая Володарского)",
+                    "hours": "Пн.-Пт.: 10:00-19:00, Сб.-Вс.: 10:00-17:00 (без перерыва)",
+                    "phones": ["+7 7182 77-70-55"],
+                    "service_center": "+7 7182 39-36-89",
+                },
+            },
+            "online": {
+                "phone": "+7 771 013-00-20",
+                "kaspi_orders": "+7 775 894-93-84",
+                "email": "sales@overclockers.kz",
+                "instagram": "https://www.instagram.com/over.kz/",
+                "website": "https://over-shop.kz/",
+            },
+            "delivery": {
+                "pickup": "Самовывоз из магазинов в Алматы, Астане, Павлодаре",
+                "courier": "Доставка курьером по городу",
+                "express": "Экспресс-доставка",
+                "transport": "JetLogistic, Exline, DPD, ABT и другие",
+            },
+            "payment": {
+                "methods": ["Картой онлайн", "Рассрочка 0-0-12 от Kaspi", "Наличными при получении"],
+                "info_url": "https://over-shop.kz/help/payment/",
+            },
         }
 
     async def _tool_call_manager(self, params: dict, session_id: str) -> dict:
