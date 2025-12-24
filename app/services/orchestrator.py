@@ -174,14 +174,23 @@ class Orchestrator:
 
         # Step 1: LLM decides which tool to call
         tool_decision = await self._decide_tool(message, context, chat_history)
-        logger.info(f"Tool decision: {tool_decision}")
 
         tool_name = tool_decision.get("tool", "general_response")
         params = tool_decision.get("params", {})
+        reasoning = tool_decision.get("reasoning", "")
+
+        logger.info(f"[CHAT] User: {message[:50]}...")
+        logger.info(f"[TOOL] {tool_name} | params={params}")
+        if reasoning:
+            logger.debug(f"[WHY] {reasoning}")
 
         # Step 2: Execute the tool
         tool_result = await self.tool_executor.execute(tool_name, params, session_id)
-        logger.info(f"Tool result success: {tool_result.get('success')}")
+
+        if tool_result.get("success"):
+            logger.info(f"[OK] {tool_name} executed successfully")
+        else:
+            logger.error(f"[FAIL] {tool_name}: {tool_result.get('error')}")
 
         # Step 3: Format the response
         response_text = await self._format_response(

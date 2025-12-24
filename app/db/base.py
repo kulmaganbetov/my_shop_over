@@ -18,7 +18,7 @@ class Base(DeclarativeBase):
 # Async engine and session
 async_engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
+    echo=False,  # Disable SQL logging - too verbose
     pool_pre_ping=True,
 )
 

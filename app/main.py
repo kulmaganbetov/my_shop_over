@@ -19,11 +19,17 @@ from app.db.base import async_engine
 # Static files directory
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
-# Configure logging
+# Configure logging - clean readable format
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    datefmt="%H:%M:%S",
 )
+
+# Silence noisy loggers
+for noisy_logger in ["httpx", "httpcore", "sqlalchemy", "urllib3", "asyncio"]:
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
