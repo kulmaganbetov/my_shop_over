@@ -85,7 +85,7 @@ class ToolExecutor:
 
         return {
             "products": products_data,
-            "total": result.total,
+            "total": result.total_count,
             "query": params.get("query", ""),
         }
 
