@@ -416,13 +416,28 @@ class Orchestrator:
 
     async def _generate_general_response(self, message: str, chat_history: str) -> str:
         """Generate general conversational response."""
-        system_prompt = """Ты AI-ассистент интернет-магазина компьютерной техники over-shop.kz.
+        # Check if this is a greeting (first message or greeting words)
+        greeting_words = ["привет", "здравствуй", "добрый", "салем", "хай", "hello", "hi"]
+        is_greeting = not chat_history or any(word in message.lower() for word in greeting_words)
+
+        if is_greeting:
+            return (
+                "Привет! 👋 Я **Роберт**, AI-консультант интернет-магазина Over-Shop.kz.\n\n"
+                "Чем могу помочь?\n"
+                "• Собрать игровой или рабочий ПК под ваш бюджет\n"
+                "• Найти комплектующие или технику\n"
+                "• Рассказать о доставке и оплате\n\n"
+                "Просто напишите, что вас интересует!"
+            )
+
+        system_prompt = """Ты Роберт - AI-ассистент интернет-магазина компьютерной техники Over-Shop.kz.
 Отвечай дружелюбно и кратко. Предлагай помощь с:
 - Подбором комплектующих для сборки ПК
 - Поиском товаров
 - Информацией о доставке и оплате
 
-Не выдумывай информацию о товарах или ценах."""
+Не выдумывай информацию о товарах или ценах.
+Если тебя спрашивают кто ты - отвечай что ты Роберт, AI-консультант Over-Shop.kz."""
 
         user_prompt = f"История: {chat_history}\n\nСообщение: {message}"
 
@@ -433,7 +448,7 @@ class Orchestrator:
                 temperature=0.8,
             )
         except Exception:
-            return "Привет! Чем могу помочь? Могу подобрать комплектующие для ПК или найти нужный товар."
+            return "Чем могу помочь? Могу подобрать комплектующие для ПК или найти нужный товар."
 
     def _fallback_format(self, tool_name: str, data: dict) -> str:
         """Fallback formatting without LLM."""

@@ -101,24 +101,69 @@
             align-items: center;
             gap: 6px;
             padding: 4px 10px;
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.2);
             border-radius: 20px;
             font-size: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.bot {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
             color: var(--accent-green);
+        }
+
+        .status-badge.waiting {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+        }
+
+        .status-badge.manager {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            color: var(--accent-blue);
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
-            background: var(--accent-green);
             border-radius: 50%;
             animation: pulse 2s infinite;
         }
 
+        .status-dot.bot { background: var(--accent-green); }
+        .status-dot.waiting { background: #f59e0b; }
+        .status-dot.manager { background: var(--accent-blue); }
+
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+
+        /* Manager message style */
+        .message.manager .message-avatar {
+            background: linear-gradient(135deg, var(--accent-blue) 0%, #1d4ed8 100%);
+            color: white;
+        }
+
+        .message.manager .message-content {
+            background: var(--bg-card);
+            border: 2px solid var(--accent-blue);
+            border-bottom-left-radius: 6px;
+            color: var(--text-primary);
+        }
+
+        /* System notification */
+        .system-notification {
+            text-align: center;
+            padding: 12px 20px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 12px;
+            color: var(--accent-blue);
+            font-size: 13px;
+            margin: 8px 0;
+            animation: fadeIn 0.3s ease;
         }
 
         /* Messages */
@@ -515,12 +560,12 @@
             <div class="header-info">
                 <div class="header-title">
                     Роберт
-                    <span class="status-badge">
-                        <span class="status-dot"></span>
-                        онлайн
+                    <span class="status-badge bot" id="status-badge">
+                        <span class="status-dot bot" id="status-dot"></span>
+                        <span id="status-text">онлайн</span>
                     </span>
                 </div>
-                <div class="header-subtitle">AI-ассистент Over-Shop.kz</div>
+                <div class="header-subtitle" id="header-subtitle">AI-ассистент Over-Shop.kz</div>
             </div>
         </div>
 
@@ -587,12 +632,149 @@
         let sessionId = localStorage.getItem('chatSessionId') || generateSessionId();
         let selectedFile = null;
         let isFirstMessage = true;
+        let currentStatus = 'bot';
+        let lastMessageId = 0;
+        let pollingInterval = null;
+        let managerJoined = false;
 
         // Save session ID
         localStorage.setItem('chatSessionId', sessionId);
 
         function generateSessionId() {
             return 'session-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Load chat history on page load
+        async function loadChatHistory() {
+            try {
+                const response = await fetch(`${API_URL}/chat/history/${sessionId}`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+
+                if (data.messages && data.messages.length > 0) {
+                    // Clear welcome message and show history
+                    document.getElementById('chat-messages').innerHTML = '';
+                    isFirstMessage = false;
+
+                    for (const msg of data.messages) {
+                        const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                        addMessageWithTime(msg.content, msg.role, time);
+                    }
+                }
+
+                // Update status
+                updateStatus(data.status || 'bot');
+
+                // Start polling if waiting for manager
+                if (data.status === 'waiting_manager') {
+                    startPolling();
+                }
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        // Update status badge
+        function updateStatus(status) {
+            const badge = document.getElementById('status-badge');
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            const subtitle = document.getElementById('header-subtitle');
+
+            // Remove all status classes
+            badge.classList.remove('bot', 'waiting', 'manager');
+            dot.classList.remove('bot', 'waiting', 'manager');
+
+            currentStatus = status;
+
+            if (status === 'waiting_manager') {
+                badge.classList.add('waiting');
+                dot.classList.add('waiting');
+                text.textContent = 'ожидаем менеджера';
+                subtitle.textContent = 'Менеджер скоро ответит';
+            } else if (status === 'manager' || managerJoined) {
+                badge.classList.add('manager');
+                dot.classList.add('manager');
+                text.textContent = 'менеджер в чате';
+                subtitle.textContent = 'Менеджер подключился к диалогу';
+            } else {
+                badge.classList.add('bot');
+                dot.classList.add('bot');
+                text.textContent = 'онлайн';
+                subtitle.textContent = 'AI-ассистент Over-Shop.kz';
+            }
+        }
+
+        // Start polling for new messages
+        function startPolling() {
+            if (pollingInterval) return;
+            pollingInterval = setInterval(pollForMessages, 3000);
+        }
+
+        // Stop polling
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        // Poll for new messages
+        async function pollForMessages() {
+            try {
+                const response = await fetch(`${API_URL}/chat/status/${sessionId}?last_message_id=${lastMessageId}`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+
+                // Update last message ID
+                if (data.last_message_id) {
+                    lastMessageId = data.last_message_id;
+                }
+
+                // Handle new messages
+                if (data.new_messages && data.new_messages.length > 0) {
+                    for (const msg of data.new_messages) {
+                        if (msg.content) {
+                            // Check if this is a manager message
+                            if (msg.role === 'manager') {
+                                if (!managerJoined) {
+                                    managerJoined = true;
+                                    showSystemNotification('🔵 Менеджер подключился к диалогу');
+                                    updateStatus('manager');
+                                }
+                                addMessageWithTime(msg.content, 'manager', new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+                            } else if (msg.role === 'assistant' || msg.role === 'user') {
+                                const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                                addMessageWithTime(msg.content, msg.role, time);
+                            }
+                        }
+                    }
+                }
+
+                // Update status
+                if (data.status !== currentStatus) {
+                    updateStatus(data.status);
+
+                    // Stop polling if status changed to 'bot' and no manager joined
+                    if (data.status === 'bot' && !managerJoined) {
+                        stopPolling();
+                    }
+                }
+            } catch (error) {
+                console.error('Polling error:', error);
+            }
+        }
+
+        // Show system notification
+        function showSystemNotification(text) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const notifDiv = document.createElement('div');
+            notifDiv.className = 'system-notification';
+            notifDiv.textContent = text;
+            messagesContainer.appendChild(notifDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
         function handleKeyPress(event) {
@@ -664,6 +846,13 @@
                 // Add assistant response
                 addMessage(data.message, 'assistant', data);
 
+                // Check if waiting for manager
+                if (data.data && data.data.status === 'waiting_manager') {
+                    updateStatus('waiting_manager');
+                    showSystemNotification('🟡 Ожидаем подключения менеджера...');
+                    startPolling();
+                }
+
             } catch (error) {
                 hideTyping();
                 console.error('Error:', error);
@@ -675,22 +864,34 @@
         }
 
         function addMessage(text, role, data = null) {
+            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            addMessageWithTime(text, role, time);
+        }
+
+        function addMessageWithTime(text, role, time) {
             const messagesContainer = document.getElementById('chat-messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
 
-            const avatar = role === 'assistant' ?
-                `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            let avatar;
+            if (role === 'assistant') {
+                avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 2L2 7l10 5 10-5-10-5z"/>
                     <path d="M2 17l10 5 10-5"/>
                     <path d="M2 12l10 5 10-5"/>
-                </svg>` :
-                `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                </svg>`;
+            } else if (role === 'manager') {
+                avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                    <path d="M16 11l2 2 4-4"/>
+                </svg>`;
+            } else {
+                avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                     <circle cx="12" cy="7" r="4"/>
                 </svg>`;
-
-            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            }
 
             messageDiv.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
@@ -746,7 +947,8 @@
             return div.innerHTML;
         }
 
-        // Focus input on load
+        // Load history and focus input on load
+        loadChatHistory();
         document.getElementById('chat-input').focus();
     </script>
 </body>

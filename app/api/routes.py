@@ -118,6 +118,75 @@ async def list_manufacturers(
     return {"manufacturers": manufacturers}
 
 
+@router.get("/chat/history/{session_id}")
+async def get_chat_history(
+    session_id: str,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get chat history for a session (for client to restore chat on refresh)."""
+    chat_repo = ChatRepository(session)
+    chat_session = await chat_repo.get_session_by_id(session_id)
+
+    if not chat_session:
+        return {"messages": [], "status": "bot"}
+
+    messages = await chat_repo.get_session_messages(session_id, limit=50)
+
+    return {
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            for msg in messages
+        ],
+        "status": chat_session.status or "bot",
+        "escalation_reason": chat_session.escalation_reason,
+    }
+
+
+@router.get("/chat/status/{session_id}")
+async def get_chat_status(
+    session_id: str,
+    last_message_id: Optional[int] = Query(None, description="Last message ID client has"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get session status and new messages (for polling).
+    Returns only messages after last_message_id if provided.
+    """
+    chat_repo = ChatRepository(session)
+    chat_session = await chat_repo.get_session_by_id(session_id)
+
+    if not chat_session:
+        return {"status": "bot", "new_messages": []}
+
+    # Get messages after last_message_id
+    all_messages = await chat_repo.get_session_messages(session_id, limit=50)
+
+    new_messages = []
+    if last_message_id:
+        for msg in all_messages:
+            if msg.id > last_message_id:
+                new_messages.append({
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                })
+    else:
+        # Return last message ID for tracking
+        if all_messages:
+            new_messages = [{"id": all_messages[-1].id}]
+
+    return {
+        "status": chat_session.status or "bot",
+        "new_messages": new_messages,
+        "last_message_id": all_messages[-1].id if all_messages else 0,
+    }
+
+
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""
