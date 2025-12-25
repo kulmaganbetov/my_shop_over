@@ -310,6 +310,10 @@
             background: rgba(100, 116, 139, 0.1);
             color: var(--text-secondary);
         }
+        .status-badge.manager-active {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+        }
         @keyframes pulse-bg {
             0%, 100% { background: rgba(239, 68, 68, 0.15); }
             50% { background: rgba(239, 68, 68, 0.3); }
@@ -545,6 +549,164 @@
             padding: 40px;
             color: var(--text-secondary);
         }
+
+        /* Terminal Logs */
+        .terminal {
+            background: #0d1117;
+            border-radius: 12px;
+            overflow: hidden;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            height: calc(100vh - 200px);
+            display: flex;
+            flex-direction: column;
+        }
+        .terminal-header {
+            background: #161b22;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid #30363d;
+        }
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .terminal-dot.red { background: #ff5f56; }
+        .terminal-dot.yellow { background: #ffbd2e; }
+        .terminal-dot.green { background: #27c93f; }
+        .terminal-title {
+            color: #8b949e;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        .terminal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            color: #c9d1d9;
+        }
+        .log-line {
+            padding: 2px 0;
+            display: flex;
+            gap: 12px;
+            line-height: 1.6;
+        }
+        .log-time {
+            color: #6e7681;
+            flex-shrink: 0;
+        }
+        .log-level {
+            flex-shrink: 0;
+            font-weight: 600;
+            width: 60px;
+        }
+        .log-level.INFO { color: #58a6ff; }
+        .log-level.WARNING { color: #d29922; }
+        .log-level.ERROR { color: #f85149; }
+        .log-level.FATAL { color: #ff7b72; background: #3d1e1e; padding: 0 4px; border-radius: 2px; }
+        .log-level.DEBUG { color: #8b949e; }
+        .log-message { color: #c9d1d9; word-break: break-word; }
+        .log-message .highlight { color: #7ee787; }
+        .log-message .session-id { color: #a371f7; }
+        .log-message .error-text { color: #f85149; }
+        .log-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .log-filter {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+            background: var(--bg-card);
+        }
+        .log-filter:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        .auto-scroll-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        /* Improved Chat Modal */
+        .chat-modal {
+            max-width: 900px;
+            height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-modal .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8fafc;
+        }
+        .chat-modal .chat-log {
+            max-height: none;
+        }
+        .chat-input-area {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-card);
+        }
+        .chat-input-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .chat-input-row input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .chat-input-row input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        .chat-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .btn-send {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-close-chat {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .btn-close-chat:hover {
+            background: var(--accent-red);
+            color: white;
+        }
+        .session-info {
+            padding: 12px 20px;
+            background: var(--bg-main);
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
@@ -612,6 +774,13 @@
                     </svg>
                     <span>Вызов менеджера</span>
                     <span class="nav-badge" id="manager-badge">0</span>
+                </a>
+                <a class="nav-link" onclick="showPage('logs')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="4 17 10 11 4 5"/>
+                        <line x1="12" y1="19" x2="20" y2="19"/>
+                    </svg>
+                    <span>Логи</span>
                 </a>
             </nav>
 
@@ -760,22 +929,87 @@
                     </table>
                 </div>
             </div>
+
+            <!-- Logs Page -->
+            <div class="page" id="page-logs">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">Логи системы</h1>
+                        <p class="page-subtitle">Мониторинг работы бота и сервисов</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="loadLogs()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;">
+                            <path d="M23 4v6h-6M1 20v-6h6"/>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                        </svg>
+                        Обновить
+                    </button>
+                </div>
+
+                <div class="log-controls">
+                    <select class="log-filter" id="log-level-filter" onchange="filterLogs()">
+                        <option value="all">Все уровни</option>
+                        <option value="INFO">INFO</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="ERROR">ERROR</option>
+                        <option value="FATAL">FATAL</option>
+                    </select>
+                    <input type="text" class="log-filter" id="log-search" placeholder="Поиск..." style="width:200px;" onkeyup="filterLogs()">
+                    <label class="auto-scroll-label">
+                        <input type="checkbox" id="auto-scroll" checked> Автопрокрутка
+                    </label>
+                </div>
+
+                <div class="terminal">
+                    <div class="terminal-header">
+                        <span class="terminal-dot red"></span>
+                        <span class="terminal-dot yellow"></span>
+                        <span class="terminal-dot green"></span>
+                        <span class="terminal-title">over-shop-assistant — logs</span>
+                    </div>
+                    <div class="terminal-body" id="log-container">
+                        <div class="log-line">
+                            <span class="log-time">--:--:--</span>
+                            <span class="log-level INFO">INFO</span>
+                            <span class="log-message">Загрузка логов...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
     <!-- Session Detail Modal -->
     <div class="modal-overlay" id="session-modal">
-        <div class="modal" style="max-width:800px;">
+        <div class="modal chat-modal">
             <div class="modal-header">
-                <h3 class="modal-title">Диалог сессии</h3>
-                <button class="modal-close" onclick="closeModal('session-modal')">x</button>
+                <h3 class="modal-title">💬 Чат с клиентом</h3>
+                <button class="modal-close" onclick="closeModal('session-modal')">✕</button>
+            </div>
+            <div class="session-info">
+                <span id="session-id-display">ID: ---</span>
+                <span id="session-status-display"></span>
             </div>
             <div class="modal-body">
                 <div class="chat-log" id="chat-log"></div>
             </div>
-            <div class="reply-input">
-                <input type="text" id="manager-reply-input" placeholder="Ответ менеджера..." onkeypress="handleManagerReplyKeyPress(event)">
-                <button class="btn btn-primary" onclick="sendManagerReply()">Отправить</button>
+            <div class="chat-input-area">
+                <div class="chat-input-row">
+                    <input type="text" id="manager-reply-input" placeholder="Введите сообщение..." onkeypress="handleManagerReplyKeyPress(event)">
+                    <div class="chat-actions">
+                        <button class="btn btn-primary btn-send" onclick="sendManagerReply()" title="Отправить">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z"/>
+                            </svg>
+                        </button>
+                        <button class="btn btn-close-chat" onclick="closeConversation()" title="Закрыть и вернуть боту">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                            Завершить
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -893,6 +1127,9 @@
             setTimeout(() => el.style.display = 'none', 3000);
         }
 
+        let allLogs = [];
+        let chatPollingInterval = null;
+
         function showPage(page) {
             document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -903,6 +1140,7 @@
             if (page === 'sessions') loadSessions();
             if (page === 'manager-requests') loadManagerRequests();
             if (page === 'users') loadUsers();
+            if (page === 'logs') loadLogs();
         }
 
         async function loadStats() {
@@ -959,6 +1197,7 @@
         function getStatusBadge(status) {
             const labels = {
                 'waiting_manager': '<span class="status-badge waiting">⚠️ Ожидает</span>',
+                'manager_active': '<span class="status-badge manager-active">💬 В работе</span>',
                 'bot': '<span class="status-badge bot">🤖 Бот</span>',
                 'closed': '<span class="status-badge closed">✓ Закрыт</span>'
             };
@@ -1032,13 +1271,45 @@
             currentSessionId = sessionId;
             document.getElementById('session-modal').classList.add('active');
             document.getElementById('chat-log').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            document.getElementById('session-id-display').textContent = `ID: ${sessionId.substring(0, 20)}...`;
 
             try {
                 const res = await fetch(`${API_URL}/sessions/${sessionId}/messages`, { credentials: 'include' });
                 const data = await res.json();
                 renderChatLog(data.messages || []);
+
+                // Get session status
+                const statusRes = await fetch(`${window.location.origin}/api/v1/chat/status/${sessionId}`);
+                if (statusRes.ok) {
+                    const statusData = await statusRes.json();
+                    document.getElementById('session-status-display').innerHTML = getStatusBadge(statusData.status);
+                }
+
+                // Start polling for new messages
+                startChatPolling();
             } catch (e) {
                 document.getElementById('chat-log').innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+            }
+        }
+
+        function startChatPolling() {
+            stopChatPolling();
+            chatPollingInterval = setInterval(async () => {
+                if (!currentSessionId) return;
+                try {
+                    const res = await fetch(`${API_URL}/sessions/${currentSessionId}/messages`, { credentials: 'include' });
+                    const data = await res.json();
+                    renderChatLog(data.messages || []);
+                } catch (e) {
+                    console.error('Chat polling error:', e);
+                }
+            }, 3000);
+        }
+
+        function stopChatPolling() {
+            if (chatPollingInterval) {
+                clearInterval(chatPollingInterval);
+                chatPollingInterval = null;
             }
         }
 
@@ -1158,6 +1429,88 @@
 
         function closeModal(id) {
             document.getElementById(id).classList.remove('active');
+            if (id === 'session-modal') {
+                stopChatPolling();
+                currentSessionId = null;
+            }
+        }
+
+        async function closeConversation() {
+            if (!currentSessionId) return;
+            if (!confirm('Завершить диалог и вернуть боту?')) return;
+
+            try {
+                await fetch(`${API_URL}/sessions/${currentSessionId}/close`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                closeModal('session-modal');
+                loadManagerRequests();
+                loadStats();
+            } catch (e) {
+                alert('Ошибка закрытия сессии');
+            }
+        }
+
+        async function loadLogs() {
+            const container = document.getElementById('log-container');
+            container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level INFO">INFO</span><span class="log-message">Загрузка логов...</span></div>';
+
+            try {
+                const res = await fetch(`${API_URL}/logs?limit=200`, { credentials: 'include' });
+                if (res.ok) {
+                    const data = await res.json();
+                    allLogs = data.logs || [];
+                    renderLogs(allLogs);
+                } else {
+                    container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level ERROR">ERROR</span><span class="log-message">Не удалось загрузить логи</span></div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level ERROR">ERROR</span><span class="log-message">Ошибка подключения к серверу</span></div>';
+            }
+        }
+
+        function filterLogs() {
+            const level = document.getElementById('log-level-filter').value;
+            const search = document.getElementById('log-search').value.toLowerCase();
+
+            let filtered = allLogs;
+            if (level !== 'all') {
+                filtered = filtered.filter(log => log.level === level);
+            }
+            if (search) {
+                filtered = filtered.filter(log => log.message.toLowerCase().includes(search));
+            }
+            renderLogs(filtered);
+        }
+
+        function renderLogs(logs) {
+            const container = document.getElementById('log-container');
+            if (!logs.length) {
+                container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level INFO">INFO</span><span class="log-message">Логи не найдены</span></div>';
+                return;
+            }
+
+            container.innerHTML = logs.map(log => {
+                const time = log.time || '--:--:--';
+                const level = log.level || 'INFO';
+                let message = escapeHtml(log.message || '');
+
+                // Highlight patterns
+                message = message.replace(/session-[a-z0-9]+/gi, '<span class="session-id">$&</span>');
+                message = message.replace(/\[CHAT\]/g, '<span class="highlight">[CHAT]</span>');
+                message = message.replace(/\[TOOL\]/g, '<span class="highlight">[TOOL]</span>');
+                message = message.replace(/\[MANAGER\]/g, '<span class="highlight">[MANAGER]</span>');
+                message = message.replace(/\[BLOCKED\]/g, '<span class="highlight">[BLOCKED]</span>');
+                message = message.replace(/error|failed|exception/gi, '<span class="error-text">$&</span>');
+
+                return `<div class="log-line"><span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-message">${message}</span></div>`;
+            }).join('');
+
+            // Auto-scroll
+            if (document.getElementById('auto-scroll').checked) {
+                container.scrollTop = container.scrollHeight;
+            }
         }
 
         function formatDate(str) {

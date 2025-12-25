@@ -114,11 +114,15 @@ class ChatRepository(BaseRepository[ChatSession]):
         return chat_session
 
     async def get_sessions_waiting_manager(self) -> list[ChatSession]:
-        """Get all sessions waiting for manager response."""
+        """Get all sessions needing manager attention (waiting or active)."""
         result = await self.session.execute(
             select(ChatSession)
-            .where(ChatSession.status == "waiting_manager")
-            .order_by(ChatSession.updated_at.desc())
+            .where(ChatSession.status.in_(["waiting_manager", "manager_active"]))
+            .order_by(
+                # waiting_manager first (more urgent)
+                ChatSession.status.asc(),
+                ChatSession.updated_at.desc()
+            )
         )
         return list(result.scalars().all())
 

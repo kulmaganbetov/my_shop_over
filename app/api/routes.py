@@ -187,6 +187,32 @@ async def get_chat_status(
     }
 
 
+@router.post("/chat/reset/{session_id}")
+async def reset_chat_session(
+    session_id: str,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Reset/delete a chat session (client-initiated)."""
+    from sqlalchemy import delete
+    from app.db.models import ChatMessage, ChatSession as ChatSessionModel
+
+    try:
+        # Delete messages for this session
+        await session.execute(
+            delete(ChatMessage).where(ChatMessage.session_id == session_id)
+        )
+        # Delete the session itself
+        await session.execute(
+            delete(ChatSessionModel).where(ChatSessionModel.session_id == session_id)
+        )
+        await session.commit()
+        logger.info(f"[RESET] Session {session_id} deleted by client")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error resetting session {session_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""

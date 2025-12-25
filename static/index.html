@@ -530,6 +530,27 @@
             color: white;
         }
 
+        /* Reset button */
+        .reset-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .reset-btn:hover {
+            background: var(--bg-main);
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
         /* Responsive */
         @media (max-width: 600px) {
             body {
@@ -567,6 +588,12 @@
                 </div>
                 <div class="header-subtitle" id="header-subtitle">AI-ассистент Over-Shop.kz</div>
             </div>
+            <button class="reset-btn" onclick="resetChat()" title="Начать новый чат">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                </svg>
+            </button>
         </div>
 
         <!-- Messages -->
@@ -636,6 +663,7 @@
         let lastMessageId = 0;
         let pollingInterval = null;
         let managerJoined = false;
+        let displayedMessageIds = new Set(); // Track displayed messages to avoid duplicates
 
         // Save session ID
         localStorage.setItem('chatSessionId', sessionId);
@@ -647,6 +675,15 @@
         // Load chat history on page load
         async function loadChatHistory() {
             try {
+                // First get status to know last_message_id
+                const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
+                if (statusResp.ok) {
+                    const statusData = await statusResp.json();
+                    if (statusData.last_message_id) {
+                        lastMessageId = statusData.last_message_id;
+                    }
+                }
+
                 const response = await fetch(`${API_URL}/chat/history/${sessionId}`);
                 if (!response.ok) return;
 
@@ -666,22 +703,16 @@
                             managerJoined = true;
                         }
                     }
+
+                    // Mark all existing messages as displayed
+                    displayedMessageIds.add(lastMessageId);
                 }
 
                 // Update status
                 updateStatus(data.status || 'bot');
 
-                // Get initial lastMessageId for polling
-                const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
-                if (statusResp.ok) {
-                    const statusData = await statusResp.json();
-                    if (statusData.last_message_id) {
-                        lastMessageId = statusData.last_message_id;
-                    }
-                }
-
-                // Start polling if waiting for manager OR if manager already joined
-                if (data.status === 'waiting_manager' || managerJoined) {
+                // Start polling if waiting for manager OR if manager already joined OR manager_active
+                if (data.status === 'waiting_manager' || data.status === 'manager_active' || managerJoined) {
                     startPolling();
                 }
             } catch (error) {
@@ -742,29 +773,41 @@
 
                 const data = await response.json();
 
-                // Update last message ID
-                if (data.last_message_id) {
-                    lastMessageId = data.last_message_id;
-                }
-
-                // Handle new messages
+                // Handle new messages - check for duplicates
                 if (data.new_messages && data.new_messages.length > 0) {
                     for (const msg of data.new_messages) {
+                        // Skip if already displayed
+                        if (msg.id && displayedMessageIds.has(msg.id)) {
+                            continue;
+                        }
+
                         if (msg.content) {
+                            // Mark as displayed
+                            if (msg.id) displayedMessageIds.add(msg.id);
+
                             // Check if this is a manager message
                             if (msg.role === 'manager') {
                                 if (!managerJoined) {
                                     managerJoined = true;
                                     showSystemNotification('🔵 Менеджер подключился к диалогу');
-                                    updateStatus('manager');
+                                    updateStatus('manager_active');
                                 }
-                                addMessageWithTime(msg.content, 'manager', new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
-                            } else if (msg.role === 'assistant' || msg.role === 'user') {
+                                const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                                addMessageWithTime(msg.content, 'manager', time);
+                            }
+                            // Only show assistant messages from polling, NOT user messages (user messages shown immediately when sent)
+                            else if (msg.role === 'assistant') {
                                 const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
                                 addMessageWithTime(msg.content, msg.role, time);
                             }
+                            // Skip user messages - they're shown immediately when sent
                         }
                     }
+                }
+
+                // Update last message ID
+                if (data.last_message_id) {
+                    lastMessageId = data.last_message_id;
                 }
 
                 // Update status
@@ -818,6 +861,56 @@
             sendMessage();
         }
 
+        async function resetChat() {
+            if (!confirm('Вы точно хотите удалить историю чата?')) return;
+
+            try {
+                // Call API to delete session
+                await fetch(`${API_URL}/chat/reset/${sessionId}`, { method: 'POST' });
+            } catch (e) {
+                console.log('Reset API error (continuing anyway):', e);
+            }
+
+            // Generate new session ID
+            sessionId = generateSessionId();
+            localStorage.setItem('chatSessionId', sessionId);
+
+            // Reset state
+            isFirstMessage = true;
+            currentStatus = 'bot';
+            lastMessageId = 0;
+            managerJoined = false;
+            displayedMessageIds.clear();
+            stopPolling();
+
+            // Reset UI to welcome message
+            document.getElementById('chat-messages').innerHTML = `
+                <div class="welcome-message">
+                    <div class="welcome-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                            <path d="M2 17l10 5 10-5"/>
+                            <path d="M2 12l10 5 10-5"/>
+                        </svg>
+                    </div>
+                    <h2 class="welcome-title">Привет! Я Роберт</h2>
+                    <p class="welcome-subtitle">
+                        Ваш персональный ассистент в Over-Shop.kz.
+                        Помогу найти товары, собрать компьютер или отвечу на вопросы о доставке и гарантии.
+                    </p>
+                    <div class="suggestions" style="justify-content: center; margin-top: 24px;">
+                        <button class="suggestion-btn" onclick="sendSuggestion('Собери мне игровой ПК за 500000 тенге')">Собрать игровой ПК</button>
+                        <button class="suggestion-btn" onclick="sendSuggestion('Покажи видеокарты RTX')">Видеокарты RTX</button>
+                        <button class="suggestion-btn" onclick="sendSuggestion('Как оформить доставку?')">О доставке</button>
+                        <button class="manager-btn" onclick="sendSuggestion('Позови менеджера')">Связаться с менеджером</button>
+                    </div>
+                </div>
+            `;
+
+            // Reset status badge
+            updateStatus('bot');
+        }
+
         async function sendMessage() {
             const input = document.getElementById('chat-input');
             const message = input.value.trim();
@@ -857,8 +950,20 @@
 
                 const data = await response.json();
 
-                // Add assistant response
-                addMessage(data.message, 'assistant', data);
+                // Add assistant response (only if not a blocked message)
+                if (data.message) {
+                    addMessage(data.message, 'assistant', data);
+                }
+
+                // Update lastMessageId to prevent duplicate from polling
+                const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
+                if (statusResp.ok) {
+                    const statusData = await statusResp.json();
+                    if (statusData.last_message_id) {
+                        lastMessageId = statusData.last_message_id;
+                        displayedMessageIds.add(statusData.last_message_id);
+                    }
+                }
 
                 // Check if waiting for manager
                 if (data.data && data.data.status === 'waiting_manager') {

@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
@@ -20,14 +21,27 @@ def setup_logging(
         "%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s"
     )
 
+    # Short format for file logs (easier to parse in admin)
+    file_format = "%(asctime)s | %(levelname)s | %(message)s"
+
+    handlers = [logging.StreamHandler(sys.stdout)]
+
+    # Add file handler for admin log viewing
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "app.log"
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(file_format, datefmt="%H:%M:%S"))
+    file_handler.setLevel(log_level)
+    handlers.append(file_handler)
+
     # Configure root logger
     logging.basicConfig(
         level=log_level,
         format=log_format,
         datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=handlers,
+        force=True,  # Override any existing config
     )
 
     # Set specific loggers

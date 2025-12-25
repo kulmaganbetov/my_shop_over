@@ -709,3 +709,106 @@ async def get_admin_stats(
             for row in intent_dist.all()
         ],
     }
+
+
+@router.post("/sessions/{session_id}/close")
+async def close_session(
+    session_id: str,
+    admin: AdminUser = Depends(require_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Close a session and return it to bot handling."""
+    from app.db.repositories import ChatRepository
+
+    chat_repo = ChatRepository(db)
+    await chat_repo.resolve_escalation(session_id, "bot")
+
+    # Add system message
+    chat_msg = ChatMessage(
+        session_id=session_id,
+        role="assistant",
+        content="✅ Менеджер завершил диалог. Я снова готов помочь! Чем могу быть полезен?",
+        intent="manager_close",
+    )
+    db.add(chat_msg)
+    await db.commit()
+
+    logger.info(f"[MANAGER] {admin.username} closed session {session_id}")
+
+    return {"success": True}
+
+
+# In-memory log buffer for admin display
+_log_buffer: list[dict] = []
+_max_logs = 500
+
+
+def add_to_log_buffer(level: str, message: str):
+    """Add a log entry to the in-memory buffer."""
+    from datetime import datetime
+    entry = {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "level": level,
+        "message": message,
+    }
+    _log_buffer.append(entry)
+    if len(_log_buffer) > _max_logs:
+        _log_buffer.pop(0)
+
+
+@router.get("/logs")
+async def get_logs(
+    limit: int = Query(100, ge=1, le=500),
+    admin: AdminUser = Depends(require_admin),
+):
+    """Get recent logs for admin dashboard."""
+    # Return logs from buffer + read from log file if available
+    import os
+    from pathlib import Path
+
+    logs = []
+
+    # Try to read from log file
+    log_file = Path("logs/app.log")
+    if log_file.exists():
+        try:
+            with open(log_file, "r") as f:
+                lines = f.readlines()[-limit:]
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Parse log line: "HH:MM:SS | LEVEL | message"
+                    parts = line.split(" | ", 2)
+                    if len(parts) >= 3:
+                        logs.append({
+                            "time": parts[0].strip(),
+                            "level": parts[1].strip(),
+                            "message": parts[2].strip(),
+                        })
+                    elif len(parts) == 2:
+                        logs.append({
+                            "time": parts[0].strip(),
+                            "level": "INFO",
+                            "message": parts[1].strip(),
+                        })
+                    else:
+                        logs.append({
+                            "time": "--:--:--",
+                            "level": "INFO",
+                            "message": line,
+                        })
+        except Exception as e:
+            logger.error(f"Error reading log file: {e}")
+
+    # Also add from in-memory buffer
+    logs.extend(_log_buffer[-limit:])
+
+    # If no logs found, add placeholder
+    if not logs:
+        logs = [
+            {"time": "--:--:--", "level": "INFO", "message": "Логи приложения не найдены. Убедитесь что логирование настроено."},
+            {"time": "--:--:--", "level": "INFO", "message": "Для просмотра логов создайте директорию logs/ и настройте вывод в logs/app.log"},
+        ]
+
+    return {"logs": logs[-limit:]}
