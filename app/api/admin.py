@@ -758,96 +758,38 @@ def add_to_log_buffer(level: str, message: str):
 
 @router.get("/logs")
 async def get_logs(
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=1000),
     admin: AdminUser = Depends(require_admin),
 ):
     """Get recent logs for admin dashboard."""
-    from pathlib import Path
     from datetime import datetime
-    import re
 
     logs = []
 
-    # Try multiple log file locations
-    log_files = [
-        Path("logs/app.log"),
-        Path("app.log"),
-        Path("/tmp/overshop.log"),
-    ]
-
-    for log_file in log_files:
-        if log_file.exists():
-            try:
-                with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()[-limit * 2:]  # Read more to filter
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
-                            continue
-
-                        # Try to parse different log formats
-                        parsed = None
-
-                        # Format 1: "HH:MM:SS | LEVEL | message"
-                        parts = line.split(" | ", 2)
-                        if len(parts) >= 3:
-                            parsed = {
-                                "time": parts[0].strip()[-8:],  # Last 8 chars for time
-                                "level": parts[1].strip().upper(),
-                                "message": parts[2].strip(),
-                            }
-                        # Format 2: "YYYY-MM-DD HH:MM:SS | LEVEL | name | message"
-                        elif len(parts) == 2:
-                            parsed = {
-                                "time": parts[0].strip()[-8:],
-                                "level": "INFO",
-                                "message": parts[1].strip(),
-                            }
-                        # Format 3: Uvicorn style "INFO:     127.0.0.1:..."
-                        elif ":" in line and ("INFO" in line or "ERROR" in line or "WARNING" in line):
-                            match = re.match(r'(INFO|ERROR|WARNING|DEBUG):\s*(.*)', line)
-                            if match:
-                                parsed = {
-                                    "time": datetime.now().strftime("%H:%M:%S"),
-                                    "level": match.group(1),
-                                    "message": match.group(2),
-                                }
-
-                        if not parsed:
-                            parsed = {
-                                "time": "--:--:--",
-                                "level": "INFO",
-                                "message": line[:200],  # Truncate long lines
-                            }
-
-                        logs.append(parsed)
-                break  # Found a log file, stop searching
-            except Exception as e:
-                logger.error(f"Error reading log file {log_file}: {e}")
-
-    # Add from in-memory buffer (local)
-    logs.extend(_log_buffer[-limit:])
-
-    # Add from admin log handler buffer (from logging module)
+    # Get logs from main app buffer (primary source)
     try:
-        from app.core.logging import get_admin_logs
-        admin_logs = get_admin_logs(limit)
-        logs.extend(admin_logs)
+        from app.main import get_admin_logs
+        logs = get_admin_logs(limit)
     except ImportError:
         pass
 
-    # Add current request as a log entry (so we know the endpoint is working)
-    now = datetime.now().strftime("%H:%M:%S")
+    # Calculate stats for Kibana-style dashboard
+    now = datetime.now()
+    stats = {
+        "total": len(logs),
+        "info": sum(1 for log in logs if log.get("level") == "INFO"),
+        "warning": sum(1 for log in logs if log.get("level") == "WARNING"),
+        "error": sum(1 for log in logs if log.get("level") == "ERROR"),
+    }
+
+    # If no logs, add startup log
     if not logs:
-        # Create logs directory if missing
-        Path("logs").mkdir(exist_ok=True)
+        logger.info("[ADMIN] Logs dashboard accessed")
+        logs = [{
+            "time": now.strftime("%H:%M:%S"),
+            "level": "INFO",
+            "message": "[ADMIN] Logs dashboard started. Logs will appear as system runs.",
+            "timestamp": now.isoformat(),
+        }]
 
-        logs = [
-            {"time": now, "level": "INFO", "message": "[ADMIN] Logs page opened"},
-            {"time": now, "level": "INFO", "message": "Логи сервиса загружаются из logs/app.log"},
-            {"time": now, "level": "WARNING", "message": "Файл логов не найден. Перезапустите сервис для создания файла."},
-            {"time": now, "level": "INFO", "message": "После перезапуска логи будут записываться автоматически."},
-        ]
-
-    # Sort by time and return last N
-    return {"logs": logs[-limit:]}
+    return {"logs": logs[-limit:], "stats": stats}

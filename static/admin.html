@@ -707,6 +707,134 @@
             justify-content: space-between;
             align-items: center;
         }
+
+        /* Kibana-style Logs Dashboard */
+        .log-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .log-stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid;
+            box-shadow: var(--shadow);
+        }
+        .log-stat-card.total { border-color: var(--primary); }
+        .log-stat-card.info { border-color: #58a6ff; }
+        .log-stat-card.warning { border-color: #d29922; }
+        .log-stat-card.error { border-color: #f85149; }
+        .log-stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .log-stat-card.total .log-stat-value { color: var(--primary); }
+        .log-stat-card.info .log-stat-value { color: #58a6ff; }
+        .log-stat-card.warning .log-stat-value { color: #d29922; }
+        .log-stat-card.error .log-stat-value { color: #f85149; }
+        .log-stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .log-chart-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+        }
+        .log-chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .log-chart-legend {
+            display: flex;
+            gap: 16px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+        .legend-item.info .legend-dot { background: #58a6ff; }
+        .legend-item.warning .legend-dot { background: #d29922; }
+        .legend-item.error .legend-dot { background: #f85149; }
+        .log-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 80px;
+            padding: 8px 0;
+        }
+        .chart-bar {
+            flex: 1;
+            min-width: 8px;
+            border-radius: 3px 3px 0 0;
+            transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
+        }
+        .chart-bar:hover {
+            opacity: 0.8;
+        }
+        .chart-bar .bar-info { background: #58a6ff; }
+        .chart-bar .bar-warning { background: #d29922; }
+        .chart-bar .bar-error { background: #f85149; }
+        .chart-bar-segment {
+            width: 100%;
+            border-radius: 2px 2px 0 0;
+        }
+
+        .log-level-filters {
+            display: flex;
+            gap: 8px;
+        }
+        .level-btn {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .level-btn:hover { background: var(--bg-main); }
+        .level-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+        .level-btn.info.active { background: #58a6ff; border-color: #58a6ff; }
+        .level-btn.warning.active { background: #d29922; border-color: #d29922; }
+        .level-btn.error.active { background: #f85149; border-color: #f85149; }
+
+        .terminal-status {
+            margin-left: auto;
+            font-size: 12px;
+            color: #27c93f;
+        }
+        .terminal-status.disconnected { color: #f85149; }
+
+        .terminal {
+            height: calc(100vh - 520px);
+            min-height: 300px;
+        }
     </style>
 </head>
 <body>
@@ -930,42 +1058,82 @@
                 </div>
             </div>
 
-            <!-- Logs Page -->
+            <!-- Logs Page - Kibana Style -->
             <div class="page" id="page-logs">
                 <div class="page-header">
                     <div>
-                        <h1 class="page-title">Логи системы</h1>
-                        <p class="page-subtitle">Мониторинг работы бота и сервисов</p>
+                        <h1 class="page-title">📊 Логи системы</h1>
+                        <p class="page-subtitle">Мониторинг в реальном времени</p>
                     </div>
-                    <button class="btn btn-primary" onclick="loadLogs()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;">
-                            <path d="M23 4v6h-6M1 20v-6h6"/>
-                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                        </svg>
-                        Обновить
-                    </button>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <label class="auto-scroll-label">
+                            <input type="checkbox" id="auto-refresh" onchange="toggleAutoRefresh()"> Live
+                        </label>
+                        <button class="btn btn-primary" onclick="loadLogs()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;">
+                                <path d="M23 4v6h-6M1 20v-6h6"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            Обновить
+                        </button>
+                    </div>
                 </div>
 
+                <!-- Stats Cards -->
+                <div class="log-stats-grid">
+                    <div class="log-stat-card total">
+                        <div class="log-stat-value" id="log-stat-total">0</div>
+                        <div class="log-stat-label">Всего логов</div>
+                    </div>
+                    <div class="log-stat-card info">
+                        <div class="log-stat-value" id="log-stat-info">0</div>
+                        <div class="log-stat-label">INFO</div>
+                    </div>
+                    <div class="log-stat-card warning">
+                        <div class="log-stat-value" id="log-stat-warning">0</div>
+                        <div class="log-stat-label">WARNING</div>
+                    </div>
+                    <div class="log-stat-card error">
+                        <div class="log-stat-value" id="log-stat-error">0</div>
+                        <div class="log-stat-label">ERROR</div>
+                    </div>
+                </div>
+
+                <!-- Log Chart -->
+                <div class="log-chart-container">
+                    <div class="log-chart-header">
+                        <span>Активность за последние минуты</span>
+                        <div class="log-chart-legend">
+                            <span class="legend-item info"><span class="legend-dot"></span> INFO</span>
+                            <span class="legend-item warning"><span class="legend-dot"></span> WARNING</span>
+                            <span class="legend-item error"><span class="legend-dot"></span> ERROR</span>
+                        </div>
+                    </div>
+                    <div class="log-chart" id="log-chart"></div>
+                </div>
+
+                <!-- Filters -->
                 <div class="log-controls">
-                    <select class="log-filter" id="log-level-filter" onchange="filterLogs()">
-                        <option value="all">Все уровни</option>
-                        <option value="INFO">INFO</option>
-                        <option value="WARNING">WARNING</option>
-                        <option value="ERROR">ERROR</option>
-                        <option value="FATAL">FATAL</option>
-                    </select>
-                    <input type="text" class="log-filter" id="log-search" placeholder="Поиск..." style="width:200px;" onkeyup="filterLogs()">
+                    <div class="log-level-filters">
+                        <button class="level-btn active" data-level="all" onclick="setLogLevel('all')">Все</button>
+                        <button class="level-btn info" data-level="INFO" onclick="setLogLevel('INFO')">INFO</button>
+                        <button class="level-btn warning" data-level="WARNING" onclick="setLogLevel('WARNING')">WARNING</button>
+                        <button class="level-btn error" data-level="ERROR" onclick="setLogLevel('ERROR')">ERROR</button>
+                    </div>
+                    <input type="text" class="log-filter" id="log-search" placeholder="🔍 Поиск по логам..." style="width:300px;" onkeyup="filterLogs()">
                     <label class="auto-scroll-label">
                         <input type="checkbox" id="auto-scroll" checked> Автопрокрутка
                     </label>
                 </div>
 
+                <!-- Terminal -->
                 <div class="terminal">
                     <div class="terminal-header">
                         <span class="terminal-dot red"></span>
                         <span class="terminal-dot yellow"></span>
                         <span class="terminal-dot green"></span>
                         <span class="terminal-title">over-shop-assistant — logs</span>
+                        <span class="terminal-status" id="terminal-status">● Connected</span>
                     </div>
                     <div class="terminal-body" id="log-container">
                         <div class="log-line">
@@ -1452,34 +1620,115 @@
             }
         }
 
+        let currentLogLevel = 'all';
+        let autoRefreshInterval = null;
+
         async function loadLogs() {
             const container = document.getElementById('log-container');
-            container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level INFO">INFO</span><span class="log-message">Загрузка логов...</span></div>';
+            const statusEl = document.getElementById('terminal-status');
 
             try {
-                const res = await fetch(`${API_URL}/logs?limit=200`, { credentials: 'include' });
+                statusEl.textContent = '● Загрузка...';
+                statusEl.className = 'terminal-status';
+
+                const res = await fetch(`${API_URL}/logs?limit=500`, { credentials: 'include' });
                 if (res.ok) {
                     const data = await res.json();
                     allLogs = data.logs || [];
-                    renderLogs(allLogs);
+
+                    // Update stats
+                    const stats = data.stats || {};
+                    document.getElementById('log-stat-total').textContent = stats.total || allLogs.length;
+                    document.getElementById('log-stat-info').textContent = stats.info || 0;
+                    document.getElementById('log-stat-warning').textContent = stats.warning || 0;
+                    document.getElementById('log-stat-error').textContent = stats.error || 0;
+
+                    // Render chart
+                    renderLogChart(allLogs);
+
+                    // Render logs
+                    filterLogs();
+
+                    statusEl.textContent = '● Connected';
+                    statusEl.className = 'terminal-status';
                 } else {
+                    statusEl.textContent = '● Disconnected';
+                    statusEl.className = 'terminal-status disconnected';
                     container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level ERROR">ERROR</span><span class="log-message">Не удалось загрузить логи</span></div>';
                 }
             } catch (e) {
+                statusEl.textContent = '● Disconnected';
+                statusEl.className = 'terminal-status disconnected';
                 container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level ERROR">ERROR</span><span class="log-message">Ошибка подключения к серверу</span></div>';
             }
         }
 
+        function renderLogChart(logs) {
+            const chart = document.getElementById('log-chart');
+            if (!logs.length) {
+                chart.innerHTML = '<div style="color:#6e7681;text-align:center;width:100%;">Нет данных для графика</div>';
+                return;
+            }
+
+            // Group logs by time buckets (last 20 time slots)
+            const buckets = {};
+            const now = new Date();
+            for (let i = 0; i < 20; i++) {
+                const key = `bucket-${i}`;
+                buckets[key] = { info: 0, warning: 0, error: 0 };
+            }
+
+            // Simple distribution of logs into buckets
+            logs.forEach((log, i) => {
+                const bucketIndex = Math.floor((i / logs.length) * 20);
+                const key = `bucket-${bucketIndex}`;
+                if (buckets[key]) {
+                    if (log.level === 'INFO') buckets[key].info++;
+                    else if (log.level === 'WARNING') buckets[key].warning++;
+                    else if (log.level === 'ERROR') buckets[key].error++;
+                }
+            });
+
+            // Find max for scaling
+            let maxTotal = 1;
+            Object.values(buckets).forEach(b => {
+                const total = b.info + b.warning + b.error;
+                if (total > maxTotal) maxTotal = total;
+            });
+
+            // Render bars
+            chart.innerHTML = Object.entries(buckets).map(([key, data]) => {
+                const total = data.info + data.warning + data.error;
+                const height = Math.max(4, (total / maxTotal) * 100);
+                const infoH = (data.info / Math.max(1, total)) * height;
+                const warnH = (data.warning / Math.max(1, total)) * height;
+                const errH = (data.error / Math.max(1, total)) * height;
+
+                return `<div class="chart-bar" style="height:${height}%;" title="INFO: ${data.info}, WARNING: ${data.warning}, ERROR: ${data.error}">
+                    <div style="height:${errH}%;background:#f85149;"></div>
+                    <div style="height:${warnH}%;background:#d29922;"></div>
+                    <div style="height:${infoH}%;background:#58a6ff;"></div>
+                </div>`;
+            }).join('');
+        }
+
+        function setLogLevel(level) {
+            currentLogLevel = level;
+            document.querySelectorAll('.level-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.level === level);
+            });
+            filterLogs();
+        }
+
         function filterLogs() {
-            const level = document.getElementById('log-level-filter').value;
             const search = document.getElementById('log-search').value.toLowerCase();
 
             let filtered = allLogs;
-            if (level !== 'all') {
-                filtered = filtered.filter(log => log.level === level);
+            if (currentLogLevel !== 'all') {
+                filtered = filtered.filter(log => log.level === currentLogLevel);
             }
             if (search) {
-                filtered = filtered.filter(log => log.message.toLowerCase().includes(search));
+                filtered = filtered.filter(log => log.message && log.message.toLowerCase().includes(search));
             }
             renderLogs(filtered);
         }
@@ -1487,7 +1736,7 @@
         function renderLogs(logs) {
             const container = document.getElementById('log-container');
             if (!logs.length) {
-                container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level INFO">INFO</span><span class="log-message">Логи не найдены</span></div>';
+                container.innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span><span class="log-level INFO">INFO</span><span class="log-message">Логи не найдены. Логи появятся при работе сервиса.</span></div>';
                 return;
             }
 
@@ -1502,6 +1751,8 @@
                 message = message.replace(/\[TOOL\]/g, '<span class="highlight">[TOOL]</span>');
                 message = message.replace(/\[MANAGER\]/g, '<span class="highlight">[MANAGER]</span>');
                 message = message.replace(/\[BLOCKED\]/g, '<span class="highlight">[BLOCKED]</span>');
+                message = message.replace(/\[RESET\]/g, '<span class="highlight">[RESET]</span>');
+                message = message.replace(/\[ADMIN\]/g, '<span class="highlight">[ADMIN]</span>');
                 message = message.replace(/error|failed|exception/gi, '<span class="error-text">$&</span>');
 
                 return `<div class="log-line"><span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-message">${message}</span></div>`;
@@ -1510,6 +1761,18 @@
             // Auto-scroll
             if (document.getElementById('auto-scroll').checked) {
                 container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function toggleAutoRefresh() {
+            const checkbox = document.getElementById('auto-refresh');
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(loadLogs, 3000);
+            } else {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
             }
         }
 

@@ -4,6 +4,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from collections import deque
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,11 +21,51 @@ from app.db.base import async_engine
 # Static files directory
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
-# Configure logging - clean readable format
+# Global in-memory log buffer for admin dashboard
+admin_log_buffer: deque = deque(maxlen=1000)
+
+
+class AdminLogHandler(logging.Handler):
+    """Custom handler that stores logs in memory for admin panel."""
+
+    def emit(self, record):
+        try:
+            entry = {
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "message": self.format(record),
+                "timestamp": datetime.now().isoformat(),
+            }
+            admin_log_buffer.append(entry)
+        except Exception:
+            pass
+
+
+def get_admin_logs(limit: int = 200) -> list:
+    """Get logs from the admin buffer."""
+    return list(admin_log_buffer)[-limit:]
+
+
+# Configure logging with admin buffer
+log_format = "%(asctime)s | %(levelname)-7s | %(message)s"
+handlers = [
+    logging.StreamHandler(),  # Console output
+    AdminLogHandler(),  # Admin buffer
+]
+
+# Add file handler
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+file_handler = logging.FileHandler(log_dir / "app.log", mode="a", encoding="utf-8")
+file_handler.setFormatter(logging.Formatter(log_format, datefmt="%H:%M:%S"))
+handlers.append(file_handler)
+
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    format=log_format,
     datefmt="%H:%M:%S",
+    handlers=handlers,
+    force=True,
 )
 
 # Silence noisy loggers
