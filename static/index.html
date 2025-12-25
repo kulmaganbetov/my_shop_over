@@ -660,14 +660,28 @@
                     for (const msg of data.messages) {
                         const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
                         addMessageWithTime(msg.content, msg.role, time);
+
+                        // Track if manager has already joined
+                        if (msg.role === 'manager') {
+                            managerJoined = true;
+                        }
                     }
                 }
 
                 // Update status
                 updateStatus(data.status || 'bot');
 
-                // Start polling if waiting for manager
-                if (data.status === 'waiting_manager') {
+                // Get initial lastMessageId for polling
+                const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
+                if (statusResp.ok) {
+                    const statusData = await statusResp.json();
+                    if (statusData.last_message_id) {
+                        lastMessageId = statusData.last_message_id;
+                    }
+                }
+
+                // Start polling if waiting for manager OR if manager already joined
+                if (data.status === 'waiting_manager' || managerJoined) {
                     startPolling();
                 }
             } catch (error) {
@@ -693,7 +707,7 @@
                 dot.classList.add('waiting');
                 text.textContent = 'ожидаем менеджера';
                 subtitle.textContent = 'Менеджер скоро ответит';
-            } else if (status === 'manager' || managerJoined) {
+            } else if (status === 'manager' || status === 'manager_active' || managerJoined) {
                 badge.classList.add('manager');
                 dot.classList.add('manager');
                 text.textContent = 'менеджер в чате';

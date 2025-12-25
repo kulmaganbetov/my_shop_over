@@ -166,8 +166,8 @@ class Orchestrator:
         # Ensure session exists
         chat_session = await self.chat_repo.get_or_create_session(session_id)
 
-        # CRITICAL: Check if session is waiting for manager
-        if chat_session.status == "waiting_manager":
+        # CRITICAL: Check if session is handled by manager (bot should NOT respond)
+        if chat_session.status in ["waiting_manager", "manager_active"]:
             # Store user message but don't process with bot
             await self.chat_repo.add_message(
                 session_id=session_id,

@@ -774,7 +774,7 @@
                 <div class="chat-log" id="chat-log"></div>
             </div>
             <div class="reply-input">
-                <input type="text" id="manager-reply-input" placeholder="Ответ менеджера...">
+                <input type="text" id="manager-reply-input" placeholder="Ответ менеджера..." onkeypress="handleManagerReplyKeyPress(event)">
                 <button class="btn btn-primary" onclick="sendManagerReply()">Отправить</button>
             </div>
         </div>
@@ -1056,6 +1056,13 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        function handleManagerReplyKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendManagerReply();
+            }
         }
 
         async function sendManagerReply() {

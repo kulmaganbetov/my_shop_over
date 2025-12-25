@@ -337,9 +337,9 @@ async def send_manager_reply(
     )
     db.add(chat_msg)
 
-    # Resolve escalation - change status back to "bot"
+    # Change status to "manager_active" - bot stays blocked, manager is handling
     chat_repo = ChatRepository(db)
-    await chat_repo.resolve_escalation(session_id, "bot")
+    await chat_repo.resolve_escalation(session_id, "manager_active")
 
     await db.commit()
 
