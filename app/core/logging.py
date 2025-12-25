@@ -4,8 +4,33 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 from app.core.config import settings
+
+# In-memory log buffer for admin panel (shared)
+_admin_log_buffer: deque = deque(maxlen=500)
+
+
+class AdminLogHandler(logging.Handler):
+    """Custom handler that stores logs in memory for admin panel."""
+
+    def emit(self, record):
+        try:
+            from datetime import datetime
+            entry = {
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "message": self.format(record),
+            }
+            _admin_log_buffer.append(entry)
+        except Exception:
+            pass  # Don't break logging if buffer fails
+
+
+def get_admin_logs(limit: int = 100) -> list:
+    """Get logs from the admin buffer."""
+    return list(_admin_log_buffer)[-limit:]
 
 
 def setup_logging(
@@ -23,6 +48,7 @@ def setup_logging(
 
     # Short format for file logs (easier to parse in admin)
     file_format = "%(asctime)s | %(levelname)s | %(message)s"
+    admin_format = "%(message)s"
 
     handlers = [logging.StreamHandler(sys.stdout)]
 
@@ -34,6 +60,12 @@ def setup_logging(
     file_handler.setFormatter(logging.Formatter(file_format, datefmt="%H:%M:%S"))
     file_handler.setLevel(log_level)
     handlers.append(file_handler)
+
+    # Add admin buffer handler
+    admin_handler = AdminLogHandler()
+    admin_handler.setFormatter(logging.Formatter(admin_format))
+    admin_handler.setLevel(log_level)
+    handlers.append(admin_handler)
 
     # Configure root logger
     logging.basicConfig(

@@ -762,53 +762,92 @@ async def get_logs(
     admin: AdminUser = Depends(require_admin),
 ):
     """Get recent logs for admin dashboard."""
-    # Return logs from buffer + read from log file if available
-    import os
     from pathlib import Path
+    from datetime import datetime
+    import re
 
     logs = []
 
-    # Try to read from log file
-    log_file = Path("logs/app.log")
-    if log_file.exists():
-        try:
-            with open(log_file, "r") as f:
-                lines = f.readlines()[-limit:]
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    # Parse log line: "HH:MM:SS | LEVEL | message"
-                    parts = line.split(" | ", 2)
-                    if len(parts) >= 3:
-                        logs.append({
-                            "time": parts[0].strip(),
-                            "level": parts[1].strip(),
-                            "message": parts[2].strip(),
-                        })
-                    elif len(parts) == 2:
-                        logs.append({
-                            "time": parts[0].strip(),
-                            "level": "INFO",
-                            "message": parts[1].strip(),
-                        })
-                    else:
-                        logs.append({
-                            "time": "--:--:--",
-                            "level": "INFO",
-                            "message": line,
-                        })
-        except Exception as e:
-            logger.error(f"Error reading log file: {e}")
+    # Try multiple log file locations
+    log_files = [
+        Path("logs/app.log"),
+        Path("app.log"),
+        Path("/tmp/overshop.log"),
+    ]
 
-    # Also add from in-memory buffer
+    for log_file in log_files:
+        if log_file.exists():
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()[-limit * 2:]  # Read more to filter
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        # Try to parse different log formats
+                        parsed = None
+
+                        # Format 1: "HH:MM:SS | LEVEL | message"
+                        parts = line.split(" | ", 2)
+                        if len(parts) >= 3:
+                            parsed = {
+                                "time": parts[0].strip()[-8:],  # Last 8 chars for time
+                                "level": parts[1].strip().upper(),
+                                "message": parts[2].strip(),
+                            }
+                        # Format 2: "YYYY-MM-DD HH:MM:SS | LEVEL | name | message"
+                        elif len(parts) == 2:
+                            parsed = {
+                                "time": parts[0].strip()[-8:],
+                                "level": "INFO",
+                                "message": parts[1].strip(),
+                            }
+                        # Format 3: Uvicorn style "INFO:     127.0.0.1:..."
+                        elif ":" in line and ("INFO" in line or "ERROR" in line or "WARNING" in line):
+                            match = re.match(r'(INFO|ERROR|WARNING|DEBUG):\s*(.*)', line)
+                            if match:
+                                parsed = {
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "level": match.group(1),
+                                    "message": match.group(2),
+                                }
+
+                        if not parsed:
+                            parsed = {
+                                "time": "--:--:--",
+                                "level": "INFO",
+                                "message": line[:200],  # Truncate long lines
+                            }
+
+                        logs.append(parsed)
+                break  # Found a log file, stop searching
+            except Exception as e:
+                logger.error(f"Error reading log file {log_file}: {e}")
+
+    # Add from in-memory buffer (local)
     logs.extend(_log_buffer[-limit:])
 
-    # If no logs found, add placeholder
+    # Add from admin log handler buffer (from logging module)
+    try:
+        from app.core.logging import get_admin_logs
+        admin_logs = get_admin_logs(limit)
+        logs.extend(admin_logs)
+    except ImportError:
+        pass
+
+    # Add current request as a log entry (so we know the endpoint is working)
+    now = datetime.now().strftime("%H:%M:%S")
     if not logs:
+        # Create logs directory if missing
+        Path("logs").mkdir(exist_ok=True)
+
         logs = [
-            {"time": "--:--:--", "level": "INFO", "message": "Логи приложения не найдены. Убедитесь что логирование настроено."},
-            {"time": "--:--:--", "level": "INFO", "message": "Для просмотра логов создайте директорию logs/ и настройте вывод в logs/app.log"},
+            {"time": now, "level": "INFO", "message": "[ADMIN] Logs page opened"},
+            {"time": now, "level": "INFO", "message": "Логи сервиса загружаются из logs/app.log"},
+            {"time": now, "level": "WARNING", "message": "Файл логов не найден. Перезапустите сервис для создания файла."},
+            {"time": now, "level": "INFO", "message": "После перезапуска логи будут записываться автоматически."},
         ]
 
+    # Sort by time and return last N
     return {"logs": logs[-limit:]}

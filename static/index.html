@@ -664,6 +664,7 @@
         let pollingInterval = null;
         let managerJoined = false;
         let displayedMessageIds = new Set(); // Track displayed messages to avoid duplicates
+        let waitingNotificationShown = false; // Track if waiting notification was already shown
 
         // Save session ID
         localStorage.setItem('chatSessionId', sessionId);
@@ -711,8 +712,9 @@
                 // Update status
                 updateStatus(data.status || 'bot');
 
-                // Start polling if waiting for manager OR if manager already joined OR manager_active
+                // Track notification state based on loaded status
                 if (data.status === 'waiting_manager' || data.status === 'manager_active' || managerJoined) {
+                    waitingNotificationShown = true; // Don't show again on page reload
                     startPolling();
                 }
             } catch (error) {
@@ -880,6 +882,7 @@
             currentStatus = 'bot';
             lastMessageId = 0;
             managerJoined = false;
+            waitingNotificationShown = false;
             displayedMessageIds.clear();
             stopPolling();
 
@@ -965,10 +968,14 @@
                     }
                 }
 
-                // Check if waiting for manager
-                if (data.data && data.data.status === 'waiting_manager') {
+                // Check if waiting for manager - only show notification ONCE
+                if (data.data && data.data.status === 'waiting_manager' && !managerJoined && !waitingNotificationShown) {
                     updateStatus('waiting_manager');
                     showSystemNotification('🟡 Ожидаем подключения менеджера...');
+                    waitingNotificationShown = true;
+                    startPolling();
+                } else if (data.data && (data.data.status === 'waiting_manager' || data.data.status === 'manager_active')) {
+                    // Just start polling if not already started, without showing notification
                     startPolling();
                 }
 
