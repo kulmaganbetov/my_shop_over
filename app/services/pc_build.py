@@ -125,6 +125,7 @@ class PCBuildService:
         cpu_budget = min(budget_allocation.get("cpu", 0), remaining_budget)
         cpu, cpu_specs, cpu_price = await self._select_cpu(cpu_budget, purpose)
 
+        is_oem_cpu = False
         if not cpu:
             warnings.append("cpu: не найден подходящий процессор")
             cpu_specs = CPUSpecs()
@@ -132,7 +133,25 @@ class PCBuildService:
             build["cpu"] = ProductSchema.model_validate(cpu)
             total_price += cpu_price
             remaining_budget -= cpu_price
-            logger.info(f"Selected CPU: {cpu.name}, price: {cpu_price}, remaining: {remaining_budget}")
+            # Check if CPU is OEM (needs cooler)
+            is_oem_cpu = "oem" in (cpu.name or "").lower()
+            logger.info(f"Selected CPU: {cpu.name}, price: {cpu_price}, OEM: {is_oem_cpu}, remaining: {remaining_budget}")
+
+        # ============================================
+        # Step 1.5: SELECT COOLER (if OEM CPU)
+        # ============================================
+        if is_oem_cpu and cpu_specs:
+            # Reserve ~5-10% of budget for cooler
+            cooler_budget = min(int(budget * 0.08), remaining_budget, 30000)
+            cooler, cooler_price = await self._select_cooler(cooler_budget, cpu_specs)
+
+            if cooler:
+                build["cooler"] = ProductSchema.model_validate(cooler)
+                total_price += cooler_price
+                remaining_budget -= cooler_price
+                logger.info(f"Selected Cooler: {cooler.name}, price: {cooler_price}, remaining: {remaining_budget}")
+            else:
+                warnings.append("cooler: не найден кулер для OEM процессора")
 
         # ============================================
         # Step 2: SELECT MOTHERBOARD (must match CPU socket)
@@ -478,7 +497,21 @@ class PCBuildService:
         best_specs = None
         best_score = -1
 
+        # Workstation GPU keywords to exclude for gaming builds
+        workstation_keywords = ["quadro", "firepro", "wx ", "radeon pro", "a2000", "a4000", "a5000", "a6000"]
+
         for product in products:
+            name_lower = (product.name or "").lower()
+
+            # Filter out workstation GPUs for gaming builds
+            if purpose in ["gaming", "general", "streaming"]:
+                if any(kw in name_lower for kw in workstation_keywords):
+                    continue
+
+            # Filter out mining cards and very old cards
+            if "mining" in name_lower or "gt 710" in name_lower or "gt 730" in name_lower:
+                continue
+
             specs = self.specs_extractor.extract_gpu_specs(
                 product.name or "",
                 product.specifications or {},
@@ -489,6 +522,10 @@ class PCBuildService:
                 continue
 
             score = price
+            # Prefer gaming cards (RTX, RX, Arc)
+            if any(g in name_lower for g in ["rtx", "rx ", "arc "]):
+                score *= 1.2
+
             if best_score < score:
                 best_score = score
                 best_gpu = product
@@ -621,6 +658,62 @@ class PCBuildService:
 
         if best_storage:
             return best_storage, best_price
+
+        return None, 0
+
+    async def _select_cooler(
+        self,
+        budget: int,
+        cpu_specs: CPUSpecs,
+    ) -> tuple[Optional[any], int]:
+        """Select CPU cooler for OEM processors."""
+        component_type, keywords = COMPONENT_TYPES["cooler"]
+
+        products = await self.product_repo.get_by_component_type(
+            component_type=component_type,
+            max_price=budget,
+            in_stock_only=True,
+            limit=30,
+            search_keywords=keywords,
+        )
+
+        best_cooler = None
+        best_price = 0
+
+        # Socket compatibility keywords
+        socket_keywords = {}
+        if cpu_specs.socket:
+            socket_str = cpu_specs.socket.value if hasattr(cpu_specs.socket, 'value') else str(cpu_specs.socket)
+            if "AM4" in socket_str or "AM5" in socket_str:
+                socket_keywords = ["am4", "am5", "amd"]
+            elif "LGA1700" in socket_str:
+                socket_keywords = ["lga1700", "lga 1700", "intel"]
+            elif "LGA1200" in socket_str:
+                socket_keywords = ["lga1200", "lga 1200", "intel"]
+
+        for product in products:
+            name_lower = (product.name or "").lower()
+
+            # Filter out water cooling if budget is low
+            if budget < 15000 and any(w in name_lower for w in ["водян", "liquid", "aio", "water"]):
+                continue
+
+            price = product.discount_price or product.price or 0
+            if price <= 0 or price > budget:
+                continue
+
+            # Prefer coolers that mention the socket
+            score = price
+            if socket_keywords:
+                if any(kw in name_lower for kw in socket_keywords):
+                    score *= 1.3
+
+            if score > best_price:
+                best_price = price
+                best_cooler = product
+
+        if best_cooler:
+            return best_cooler, best_cooler.discount_price or best_cooler.price or 0
 
         return None, 0
 
