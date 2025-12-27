@@ -157,11 +157,21 @@ TOOLS = [
     },
     {
         "name": "get_delivery_info",
-        "description": "Получить информацию о доставке и оплате. "
-                       "Используй для: 'доставка', 'как получить', 'оплата', 'рассрочка'.",
+        "description": "Получить информацию о магазинах, доставке, оплате, контактах. "
+                       "Используй для: 'доставка', 'оплата', 'адрес', 'телефон', 'режим работы', 'открыто ли'.",
         "parameters": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": ["phone", "address", "hours", "delivery", "payment", "almaty", "astana", "pavlodar", "all"],
+                    "description": "Конкретная тема: phone (телефон), address (адрес), hours (режим работы), delivery (доставка), payment (оплата), almaty/astana/pavlodar (конкретный город), all (всё)"
+                },
+                "city": {
+                    "type": "string",
+                    "description": "Город для которого нужна информация (Алматы, Астана, Павлодар)"
+                }
+            },
             "required": []
         }
     },

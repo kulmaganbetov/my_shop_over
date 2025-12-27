@@ -24,6 +24,13 @@ class ProductRepository(BaseRepository[Product]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_kaspi_code(self, code: str) -> Optional[Product]:
+        """Get product by Kaspi code."""
+        result = await self.session.execute(
+            select(Product).where(Product.kaspi_code == code)
+        )
+        return result.scalar_one_or_none()
+
     async def search_by_name(
         self,
         query: str,

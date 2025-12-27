@@ -43,11 +43,18 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - "покажи видеокарты", "найди мышку", "ноутбуки"
    - "RTX 4070", "мониторы до 200000"
    - ВАЖНО: Если пользователь говорит "хочу ЕЩЕ купить", "ДОПОЛНИТЕЛЬНО", "ОТДЕЛЬНО" → это search_products!
-   - Примеры search_products:
-     - "хочу еще купить процессор amd" → search_products(query="процессор amd")
-     - "дополнительно купить видеокарту" → search_products(query="видеокарта")
-     - "отдельно нужен монитор" → search_products(query="монитор")
-     - "купить процессор" → search_products(query="процессор")
+
+   **КРИТИЧЕСКИ ВАЖНО - правильно выделяй manufacturer и category:**
+   - "RTX 4070", "GeForce", "GTX" → manufacturer="NVIDIA"
+   - "AMD видеокарту", "Radeon", "RX 580" → manufacturer="AMD"
+   - "Intel процессор", "Core i5" → manufacturer="Intel"
+   - "видеокарта для игр" → category="Видеокарты"
+   - "процессор" → category="Процессоры"
+
+   Примеры ПРАВИЛЬНЫХ вызовов:
+   - "найди видеокарту AMD" → search_products(query="видеокарта", manufacturer="AMD", category="Видеокарты")
+   - "RTX 4070" → search_products(query="RTX 4070", manufacturer="NVIDIA", category="Видеокарты")
+   - "хочу еще купить процессор amd" → search_products(query="процессор amd", manufacturer="AMD")
 
 4. **get_alternatives** - ЗАМЕНА компонента ВНУТРИ текущей сборки:
    - ТОЛЬКО слова: "замени", "поменяй", "смени", "обнови В СБОРКЕ"
@@ -73,12 +80,16 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - "покажи сборку", "что выбрано", "моя конфигурация"
 
 9. **get_delivery_info** - информация о магазинах, доставке, контактах:
-   - "адрес", "адреса", "адреса магазинов", "где магазин", "где находитесь"
-   - "доставка", "как получить", "самовывоз", "как забрать"
-   - "оплата", "как оплатить", "рассрочка", "Kaspi"
-   - "телефон", "номер", "контакты", "связаться", "позвонить"
-   - "режим работы", "часы работы", "когда работаете", "график"
-   - "инстаграм", "соцсети", "сайт"
+   - Параметр topic ОБЯЗАТЕЛЕН для конкретных вопросов:
+     - "телефон", "номер", "позвонить" → topic="phone"
+     - "адрес", "где находитесь" → topic="address"
+     - "режим работы", "часы", "открыто", "когда работаете" → topic="hours"
+     - "доставка", "как получить", "самовывоз" → topic="delivery"
+     - "оплата", "рассрочка", "Kaspi" → topic="payment"
+   - Если спрашивают про конкретный город:
+     - "Павлодар открыт?", "магазин в Павлодаре" → topic="pavlodar"
+     - "адрес в Алматы", "Астана режим работы" → topic="almaty" или "astana"
+   - ВАЖНО: Не используй topic="all" если вопрос конкретный!
 
 10. **call_manager** - вызов менеджера:
     - "позвоните", "нужен менеджер", "хочу поговорить"
@@ -339,7 +350,63 @@ class Orchestrator:
             return self._fallback_format(tool_name, data)
 
     def _format_delivery_info(self, data: dict) -> str:
-        """Format delivery and store info - DETERMINISTIC."""
+        """Format delivery and store info - DETERMINISTIC, topic-aware."""
+        topic = data.get("topic", "all")
+
+        # Handle specific topics
+        if topic == "phone":
+            lines = ["**Телефоны Over-Shop.kz**\n"]
+            lines.append(f"📞 Интернет-магазин: {data.get('online_phone', '')}")
+            lines.append(f"📱 Kaspi заказы: {data.get('kaspi_orders', '')}")
+            lines.append("")
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"📍 {store.get('name', '')}: {', '.join(store.get('phones', []))}")
+            return "\n".join(lines)
+
+        if topic == "hours":
+            lines = ["**Режим работы магазинов**\n"]
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"📍 **{store.get('name', '')}**")
+                lines.append(f"   🕐 {store.get('hours', '')}")
+                lines.append("")
+            return "\n".join(lines)
+
+        if topic == "address":
+            lines = ["**Адреса магазинов**\n"]
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"📍 **{store.get('name', '')}**")
+                lines.append(f"   {store.get('address', '')}")
+                lines.append("")
+            return "\n".join(lines)
+
+        if topic == "delivery":
+            delivery = data.get("delivery", {})
+            lines = ["**Доставка**\n"]
+            lines.append(f"• {delivery.get('pickup', '')}")
+            lines.append(f"• {delivery.get('courier', '')}")
+            lines.append(f"• {delivery.get('express', '')}")
+            lines.append(f"• Транспортные компании: {delivery.get('transport', '')}")
+            return "\n".join(lines)
+
+        if topic == "payment":
+            payment = data.get("payment", {})
+            lines = ["**Способы оплаты**\n"]
+            for method in payment.get("methods", []):
+                lines.append(f"• {method}")
+            return "\n".join(lines)
+
+        if topic == "city":
+            store = data.get("store", {})
+            city_name = store.get("name", "")
+            lines = [f"**Магазин в {city_name}**\n"]
+            lines.append(f"📍 {store.get('address', '')}")
+            lines.append(f"🕐 {store.get('hours', '')}")
+            lines.append(f"📞 {', '.join(store.get('phones', []))}")
+            if store.get("service_center"):
+                lines.append(f"🔧 Сервис: {store.get('service_center')}")
+            return "\n".join(lines)
+
+        # Full info (topic == "all")
         stores = data.get("stores", {})
         online = data.get("online", {})
         delivery = data.get("delivery", {})

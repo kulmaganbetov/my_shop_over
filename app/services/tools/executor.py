@@ -62,12 +62,53 @@ class ToolExecutor:
         """Search for products."""
         from app.llm.service import LLMService
 
+        query = params.get("query", "").strip()
+        query_lower = query.lower()
+
+        # 1. Try exact SKU/code search first
+        sku_product = await self.product_repo.get_by_sku(query)
+        if sku_product:
+            products_data = [ProductSchema.model_validate(sku_product).model_dump()]
+            await self._update_context(session_id, {
+                "last_search_results": products_data,
+                "last_search_query": query,
+            })
+            return {
+                "products": products_data,
+                "total": 1,
+                "query": query,
+            }
+
+        # Try kaspi_code search
+        kaspi_product = await self.product_repo.get_by_kaspi_code(query)
+        if kaspi_product:
+            products_data = [ProductSchema.model_validate(kaspi_product).model_dump()]
+            await self._update_context(session_id, {
+                "last_search_results": products_data,
+                "last_search_query": query,
+            })
+            return {
+                "products": products_data,
+                "total": 1,
+                "query": query,
+            }
+
+        # 2. Auto-detect manufacturer from query keywords
+        manufacturer = params.get("manufacturer")
+        if not manufacturer:
+            manufacturer = self._detect_manufacturer(query_lower)
+
+        # 3. Auto-detect category from query keywords
+        category = params.get("category")
+        if not category:
+            category = self._detect_category(query_lower)
+
         search_params = ProductSearchParams(
-            query=params.get("query", ""),
-            category=params.get("category"),
+            query=query,
+            category=category,
             min_price=params.get("min_price"),
             max_price=params.get("max_price"),
-            manufacturer=params.get("manufacturer"),
+            manufacturer=manufacturer,
             in_stock_only=True,
             limit=5,
         )
@@ -80,14 +121,61 @@ class ToolExecutor:
         # Save to context for selection
         await self._update_context(session_id, {
             "last_search_results": products_data,
-            "last_search_query": params.get("query", ""),
+            "last_search_query": query,
         })
 
         return {
             "products": products_data,
             "total": result.total_count,
-            "query": params.get("query", ""),
+            "query": query,
         }
+
+    def _detect_manufacturer(self, query: str) -> str | None:
+        """Detect manufacturer from query keywords."""
+        nvidia_keywords = ["nvidia", "geforce", "rtx", "gtx", "quadro", "нвидиа"]
+        amd_keywords = ["amd", "radeon", "ryzen", "rx ", "rx5", "rx6", "rx7", "athlon", "epyc"]
+        intel_keywords = ["intel", "core i", "xeon", "celeron", "pentium", "arc "]
+
+        for kw in nvidia_keywords:
+            if kw in query:
+                return "NVIDIA"
+        for kw in amd_keywords:
+            if kw in query:
+                return "AMD"
+        for kw in intel_keywords:
+            if kw in query:
+                return "Intel"
+        return None
+
+    def _detect_category(self, query: str) -> str | None:
+        """Detect category from query keywords."""
+        # Check if query mentions GPU model names (RTX, RX, GT, etc.)
+        gpu_model_keywords = ["rtx", "gtx", "rx ", "rx5", "rx6", "rx7", "radeon", "geforce", "gt 7", "gt7"]
+        for kw in gpu_model_keywords:
+            if kw in query:
+                return "Видеокарты"
+
+        category_keywords = {
+            "Видеокарты": ["видеокарт", "gpu", "graphics", "карта для игр", "gaming card"],
+            "Процессоры": ["процессор", "cpu", "проц", "ryzen", "core i"],
+            "Материнские платы": ["материнск", "motherboard", "мат плат", "матплат"],
+            "Оперативная память": ["оперативн", "ram", "память ddr", "ddr4", "ddr5"],
+            "SSD накопители": ["ssd", "ссд", "твердотельн"],
+            "Жесткие диски": ["hdd", "жестк", "hard drive"],
+            "Блоки питания": ["блок питан", "psu", "бп "],
+            "Корпуса": ["корпус", "case", "кейс"],
+            "Кулеры и охлаждение": ["кулер", "охлажден", "cooler", "радиатор"],
+            "Мониторы": ["монитор", "дисплей", "экран"],
+            "Мыши": ["мышь", "мышка", "mouse"],
+            "Клавиатуры": ["клавиатур", "keyboard"],
+            "Ноутбуки": ["ноутбук", "laptop", "лэптоп"],
+        }
+
+        for category, keywords in category_keywords.items():
+            for kw in keywords:
+                if kw in query:
+                    return category
+        return None
 
     async def _tool_build_pc(self, params: dict, session_id: str) -> dict:
         """Build a PC configuration."""
@@ -358,20 +446,32 @@ class ToolExecutor:
             return {"error": "Нет данных для показа характеристик"}
 
     async def _tool_get_delivery_info(self, params: dict, session_id: str) -> dict:
-        """Get delivery and store information."""
-        return {
+        """Get delivery and store information - filtered by topic."""
+        topic = params.get("topic", "all")
+        city = params.get("city", "").lower()
+
+        # Detect city from topic if specified
+        if topic in ["almaty", "astana", "pavlodar"]:
+            city = topic
+            topic = "city"
+
+        # Full data
+        all_data = {
             "stores": {
                 "almaty": {
+                    "name": "Алматы",
                     "address": "г. Алматы, проспект Абылай хана, 7 (вход со стороны ул.Тузова)",
                     "hours": "Пн.-Пт.: 09:00-19:00, Сб.-Вс.: 09:00-17:00 (без перерыва)",
                     "phones": ["+7 747 601-03-25", "+7 7273 51-28-51"],
                 },
                 "astana": {
+                    "name": "Астана",
                     "address": "г. Астана, проспект Республики, 72 (со стороны Республики)",
                     "hours": "Пн.-Пт.: 10:00-19:00 (без перерыва), Сб.-Вс.: выходной",
                     "phones": ["+7 707 956-50-26", "+7 7172 39-52-80"],
                 },
                 "pavlodar": {
+                    "name": "Павлодар",
                     "address": "г. Павлодар, ул. Желтоксан, 7 (бывшая Володарского)",
                     "hours": "Пн.-Пт.: 10:00-19:00, Сб.-Вс.: 10:00-17:00 (без перерыва)",
                     "phones": ["+7 7182 77-70-55"],
@@ -395,6 +495,57 @@ class ToolExecutor:
                 "methods": ["Картой онлайн", "Рассрочка 0-0-12 от Kaspi", "Наличными при получении"],
                 "info_url": "https://over-shop.kz/help/payment/",
             },
+        }
+
+        # Return filtered data based on topic
+        if topic == "phone":
+            return {
+                "topic": "phone",
+                "online_phone": all_data["online"]["phone"],
+                "kaspi_orders": all_data["online"]["kaspi_orders"],
+                "stores": {k: {"name": v["name"], "phones": v["phones"]} for k, v in all_data["stores"].items()},
+            }
+
+        if topic == "hours":
+            return {
+                "topic": "hours",
+                "stores": {k: {"name": v["name"], "hours": v["hours"]} for k, v in all_data["stores"].items()},
+            }
+
+        if topic == "address":
+            return {
+                "topic": "address",
+                "stores": {k: {"name": v["name"], "address": v["address"]} for k, v in all_data["stores"].items()},
+            }
+
+        if topic == "delivery":
+            return {
+                "topic": "delivery",
+                "delivery": all_data["delivery"],
+            }
+
+        if topic == "payment":
+            return {
+                "topic": "payment",
+                "payment": all_data["payment"],
+            }
+
+        if topic == "city" and city:
+            city_key = city.replace("алматы", "almaty").replace("астана", "astana").replace("павлодар", "pavlodar")
+            if city_key in all_data["stores"]:
+                return {
+                    "topic": "city",
+                    "city": city_key,
+                    "store": all_data["stores"][city_key],
+                }
+
+        # Return all data if no specific topic
+        return {
+            "topic": "all",
+            "stores": all_data["stores"],
+            "online": all_data["online"],
+            "delivery": all_data["delivery"],
+            "payment": all_data["payment"],
         }
 
     async def _tool_call_manager(self, params: dict, session_id: str) -> dict:

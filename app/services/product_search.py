@@ -13,6 +13,19 @@ from app.schemas.llm import ProductSearchParams
 
 logger = logging.getLogger(__name__)
 
+# Accessory keywords to filter out when searching for main components
+ACCESSORY_KEYWORDS = [
+    "держатель", "подставка", "вентилятор для", "кабель", "переходник",
+    "кронштейн", "крепление", "стойка", "органайзер", "бокс для",
+    "термопаста", "салфетки", "чистящ", "защитн", "наклейк",
+]
+
+# Categories where we should filter out accessories
+MAIN_COMPONENT_CATEGORIES = [
+    "Видеокарты", "Процессоры", "Материнские платы", "Оперативная память",
+    "SSD накопители", "Жесткие диски", "Блоки питания", "Корпуса",
+]
+
 
 class ProductSearchService:
     """Service for searching products using text and vector search."""
@@ -21,6 +34,17 @@ class ProductSearchService:
         self.session = session
         self.llm_service = llm_service
         self.product_repo = ProductRepository(session)
+
+    def _is_accessory(self, product_name: str) -> bool:
+        """Check if product is an accessory based on name."""
+        name_lower = product_name.lower()
+        return any(kw in name_lower for kw in ACCESSORY_KEYWORDS)
+
+    def _filter_accessories(self, products: list, category: str | None) -> list:
+        """Filter out accessories when searching for main components."""
+        if not category or category not in MAIN_COMPONENT_CATEGORIES:
+            return products
+        return [p for p in products if not self._is_accessory(p.name)]
 
     async def search(self, params: ProductSearchParams) -> ProductSearchResponse:
         """Search for products using combined text and vector search."""
@@ -42,9 +66,11 @@ class ProductSearchService:
         try:
             # Try vector search first
             embedding = await self.llm_service.get_embedding(params.query)
+            # Request more results so we have enough after filtering
+            search_limit = params.limit * 3 if params.category in MAIN_COMPONENT_CATEGORIES else params.limit
             results = await self.product_repo.vector_search(
                 embedding=embedding,
-                limit=params.limit,
+                limit=search_limit,
                 category=params.category,
                 min_price=params.min_price,
                 max_price=params.max_price,
@@ -57,13 +83,17 @@ class ProductSearchService:
                 for product, score in results
             ]
 
+            # Filter out accessories if searching for main components
+            products = self._filter_accessories(products, params.category)
+            products = products[:params.limit]
+
         except Exception as e:
             logger.warning(f"Vector search failed, falling back to text search: {e}")
 
             # Fallback to text search
             text_results = await self.product_repo.search_by_name(
                 query=params.query,
-                limit=params.limit,
+                limit=params.limit * 2,
                 category=params.category,
                 in_stock_only=params.in_stock_only,
             )
@@ -72,6 +102,10 @@ class ProductSearchService:
                 ProductSchema.model_validate(product)
                 for product in text_results
             ]
+
+            # Filter out accessories
+            products = self._filter_accessories(products, params.category)
+            products = products[:params.limit]
 
         return ProductSearchResponse(
             products=products,
