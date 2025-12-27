@@ -20,6 +20,10 @@ from app.db.base import async_engine
 
 # Static files directory
 STATIC_DIR = Path(__file__).parent.parent / "static"
+UPLOADS_DIR = Path(__file__).parent.parent / "uploads"
+
+# Ensure uploads directory exists
+UPLOADS_DIR.mkdir(exist_ok=True)
 
 # Global in-memory log buffer for admin dashboard
 admin_log_buffer: deque = deque(maxlen=1000)
@@ -188,6 +192,10 @@ app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
 # Mount static files
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Mount uploads directory for serving uploaded files
+if UPLOADS_DIR.exists():
+    app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 @app.get("/")

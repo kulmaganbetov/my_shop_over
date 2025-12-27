@@ -356,7 +356,7 @@
 
         /* Status message while bot is thinking */
         .thinking-status {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
             padding: 10px 16px;
@@ -366,6 +366,8 @@
             font-size: 13px;
             color: var(--primary);
             animation: pulse-bg 2s infinite;
+            line-height: 1.4;
+            vertical-align: middle;
         }
 
         @keyframes pulse-bg {
@@ -381,6 +383,38 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             flex-shrink: 0;
+            align-self: center;
+            margin-top: 1px;
+        }
+
+        .thinking-status span {
+            line-height: 14px;
+        }
+
+        /* Uploaded image in chat */
+        .message-image {
+            max-width: 250px;
+            max-height: 200px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .message-image:hover {
+            transform: scale(1.02);
+        }
+
+        .message.user .message-image {
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* Image preview before sending */
+        .file-preview-image {
+            max-width: 120px;
+            max-height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
         }
 
         @keyframes spin {
@@ -943,9 +977,47 @@
                     event.target.value = '';
                     return;
                 }
+
+                // Check file type
+                const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.doc', '.docx', '.txt'];
+                const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+                if (!allowedExtensions.includes(fileExt)) {
+                    alert('Неподдерживаемый формат файла. Разрешены: ' + allowedExtensions.join(', '));
+                    event.target.value = '';
+                    return;
+                }
+
                 selectedFile = file;
-                document.getElementById('file-name').textContent = file.name;
-                document.getElementById('file-preview').style.display = 'flex';
+                const filePreview = document.getElementById('file-preview');
+                const fileName = document.getElementById('file-name');
+
+                // Check if it's an image
+                const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(fileExt);
+
+                if (isImage) {
+                    // Show image thumbnail preview
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        filePreview.innerHTML = `
+                            <img src="${e.target.result}" class="file-preview-image" alt="Preview">
+                            <span class="file-name">${file.name}</span>
+                            <span class="remove-file" onclick="removeFile()">×</span>
+                        `;
+                        filePreview.style.display = 'flex';
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    // Show file icon for documents
+                    filePreview.innerHTML = `
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <path d="M14 2v6h6"/>
+                        </svg>
+                        <span class="file-name">${file.name}</span>
+                        <span class="remove-file" onclick="removeFile()">×</span>
+                    `;
+                    filePreview.style.display = 'flex';
+                }
             }
         }
 
@@ -1140,6 +1212,9 @@
             updateStatus('bot');
         }
 
+        // Store image data URL for display before upload
+        let pendingImageDataUrl = null;
+
         async function sendMessage() {
             const input = document.getElementById('chat-input');
             const message = input.value.trim();
@@ -1152,8 +1227,22 @@
                 isFirstMessage = false;
             }
 
-            // Add user message to chat
-            addMessage(message, 'user');
+            // Check if we're sending an image
+            let imageToShow = null;
+            if (selectedFile) {
+                const fileExt = '.' + selectedFile.name.split('.').pop().toLowerCase();
+                const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(fileExt);
+                if (isImage) {
+                    // Get the preview image data URL
+                    const previewImg = document.querySelector('.file-preview-image');
+                    if (previewImg) {
+                        imageToShow = previewImg.src;
+                    }
+                }
+            }
+
+            // Add user message to chat (with image if applicable)
+            addMessageWithImage(message, 'user', imageToShow);
             input.value = '';
             input.style.height = 'auto'; // Reset textarea height
 
@@ -1319,6 +1408,49 @@
         function addMessage(text, role, data = null) {
             const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
             addMessageWithTime(text, role, time);
+        }
+
+        // Add message with optional image (for user uploads)
+        function addMessageWithImage(text, role, imageUrl = null) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            let avatar;
+            if (role === 'user') {
+                avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>`;
+            } else {
+                avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>`;
+            }
+
+            // Build content with optional image
+            let contentHtml = '';
+            if (imageUrl) {
+                contentHtml += `<img src="${imageUrl}" class="message-image" alt="Uploaded image" onclick="window.open(this.src, '_blank')">`;
+            }
+            if (text) {
+                contentHtml += `<div>${formatMessage(text)}</div>`;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div>
+                    <div class="message-content">${contentHtml}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
         function addMessageWithTime(text, role, time) {

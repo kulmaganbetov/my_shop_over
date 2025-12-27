@@ -52,7 +52,7 @@ async def chat(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/chat/upload", response_model=ChatResponse)
+@router.post("/chat/upload")
 async def chat_with_file(
     message: str = Form(""),
     session_id: str = Form(...),
@@ -70,30 +70,48 @@ async def chat_with_file(
         if len(content) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File too large. Maximum size: 5MB")
 
-        # Save file temporarily
-        file_ext = os.path.splitext(file.filename)[1] if file.filename else ""
+        # Validate file type
+        file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".doc", ".docx", ".txt"]
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed: {', '.join(allowed_extensions)}")
+
+        # Save file permanently for display
         file_id = str(uuid.uuid4())
-        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+        saved_filename = f"{file_id}{file_ext}"
+        file_path = os.path.join(UPLOAD_DIR, saved_filename)
 
         with open(file_path, "wb") as f:
             f.write(content)
 
+        # Determine file type
+        is_image = file_ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]
+        file_url = f"/uploads/{saved_filename}"
+
         # Create message with file info
-        file_info = f"[Прикреплен файл: {file.filename}]"
+        if is_image:
+            file_info = f"[Пользователь отправил изображение: {file.filename}]"
+        else:
+            file_info = f"[Пользователь прикрепил документ: {file.filename}]"
+
         full_message = f"{file_info}\n{message}" if message else file_info
 
-        logger.info(f"File uploaded: {file.filename} ({len(content)} bytes)")
+        logger.info(f"File uploaded: {file.filename} ({len(content)} bytes) -> {file_url}")
 
         # Process message with orchestrator
         response = await orchestrator.process_message(full_message, session_id)
 
-        # Clean up the file after processing
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
+        # Add file info to response data
+        response_dict = response.model_dump() if hasattr(response, 'model_dump') else dict(response)
+        if response_dict.get("data") is None:
+            response_dict["data"] = {}
+        response_dict["data"]["uploaded_file"] = {
+            "url": file_url,
+            "filename": file.filename,
+            "is_image": is_image,
+        }
 
-        return response
+        return response_dict
 
     except HTTPException:
         raise
