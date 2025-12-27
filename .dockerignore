@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Node
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Docker
+docker-compose.yml
+
+# Media / temp
+media/
+uploads/
+tmp/
+cache/
+
+# Tests
+.coverage
+pytest_cache/
+
+# DB / dumps
+*.sql
+*.dump
+*.bak
