@@ -344,10 +344,61 @@
             font-size: 14px;
             padding: 8px 12px;
             font-family: inherit;
+            resize: none;
+            min-height: 24px;
+            max-height: 120px;
+            line-height: 1.5;
         }
 
         .chat-input::placeholder {
             color: var(--text-muted);
+        }
+
+        /* Status message while bot is thinking */
+        .thinking-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(59, 130, 246, 0.1));
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 12px;
+            font-size: 13px;
+            color: var(--primary);
+            animation: pulse-bg 2s infinite;
+        }
+
+        @keyframes pulse-bg {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .thinking-status .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(99, 102, 241, 0.3);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Typing effect cursor */
+        .typing-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: var(--primary);
+            margin-left: 2px;
+            animation: blink 0.7s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
         }
 
         .input-actions {
@@ -637,13 +688,13 @@
                         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
                     </svg>
                 </button>
-                <input
-                    type="text"
+                <textarea
                     class="chat-input"
                     id="chat-input"
-                    placeholder="Напишите сообщение..."
-                    onkeypress="handleKeyPress(event)"
-                >
+                    placeholder="Напишите сообщение... (Shift+Enter для новой строки)"
+                    onkeydown="handleKeyDown(event)"
+                    rows="1"
+                ></textarea>
                 <button class="input-btn send-btn" id="send-btn" onclick="sendMessage()" title="Отправить">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 2L11 13"/>
@@ -836,16 +887,61 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        function handleKeyPress(event) {
+        // Status phrases for different actions
+        const STATUS_PHRASES = {
+            default: [
+                'Обрабатываю запрос...',
+                'Анализирую...',
+                'Думаю над ответом...',
+            ],
+            build_pc: [
+                'Анализирую бюджет...',
+                'Подбираю процессор...',
+                'Подбираю видеокарту...',
+                'Выбираю материнскую плату...',
+                'Формирую сборку...',
+                'Проверяю совместимость...',
+            ],
+            search: [
+                'Ищу товары...',
+                'Проверяю наличие...',
+                'Подбираю варианты...',
+            ],
+            delivery: [
+                'Получаю информацию...',
+                'Проверяю данные...',
+            ],
+        };
+
+        let statusPhraseInterval = null;
+        let typingEffectEnabled = true;
+
+        function handleKeyDown(event) {
+            const input = event.target;
+
+            // Enter sends message, Shift+Enter adds new line
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendMessage();
+                return;
             }
+
+            // Auto-resize textarea
+            setTimeout(() => {
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+            }, 0);
         }
 
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (file) {
+                // Check file size (max 5MB)
+                if (file.size > 5 * 1024 * 1024) {
+                    alert('Файл слишком большой. Максимальный размер: 5 МБ');
+                    event.target.value = '';
+                    return;
+                }
                 selectedFile = file;
                 document.getElementById('file-name').textContent = file.name;
                 document.getElementById('file-preview').style.display = 'flex';
@@ -856,6 +952,135 @@
             selectedFile = null;
             document.getElementById('file-input').value = '';
             document.getElementById('file-preview').style.display = 'none';
+        }
+
+        // Detect message type for status phrases
+        function detectMessageType(message) {
+            const msgLower = message.toLowerCase();
+            if (msgLower.includes('сбор') || msgLower.includes('пк') || msgLower.includes('компьютер') || msgLower.includes('бюджет')) {
+                return 'build_pc';
+            }
+            if (msgLower.includes('найди') || msgLower.includes('покажи') || msgLower.includes('поиск') || msgLower.includes('видеокарт') || msgLower.includes('процессор')) {
+                return 'search';
+            }
+            if (msgLower.includes('доставк') || msgLower.includes('адрес') || msgLower.includes('телефон') || msgLower.includes('магазин')) {
+                return 'delivery';
+            }
+            return 'default';
+        }
+
+        // Show thinking status with rotating phrases
+        function showThinkingStatus(messageType) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const phrases = STATUS_PHRASES[messageType] || STATUS_PHRASES.default;
+            let phraseIndex = 0;
+
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'message assistant';
+            statusDiv.id = 'thinking-status';
+            statusDiv.innerHTML = `
+                <div class="message-avatar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <div class="thinking-status">
+                    <div class="spinner"></div>
+                    <span id="status-phrase">${phrases[0]}</span>
+                </div>
+            `;
+            messagesContainer.appendChild(statusDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Rotate phrases every 1.5 seconds
+            statusPhraseInterval = setInterval(() => {
+                phraseIndex = (phraseIndex + 1) % phrases.length;
+                const phraseEl = document.getElementById('status-phrase');
+                if (phraseEl) {
+                    phraseEl.textContent = phrases[phraseIndex];
+                }
+            }, 1500);
+        }
+
+        function hideThinkingStatus() {
+            if (statusPhraseInterval) {
+                clearInterval(statusPhraseInterval);
+                statusPhraseInterval = null;
+            }
+            const status = document.getElementById('thinking-status');
+            if (status) status.remove();
+        }
+
+        // Typing effect for bot messages
+        async function typeMessage(element, text, speed = 15) {
+            const formattedText = formatMessage(text);
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = formattedText;
+
+            // Get all text nodes
+            const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
+            const textNodes = [];
+            let node;
+            while (node = walker.nextNode()) {
+                textNodes.push({ node: node, text: node.textContent });
+                node.textContent = '';
+            }
+
+            element.innerHTML = tempDiv.innerHTML + '<span class="typing-cursor"></span>';
+
+            // Type each character
+            for (const textNode of textNodes) {
+                const targetNode = findCorrespondingNode(element, textNode.node);
+                if (targetNode) {
+                    for (let i = 0; i < textNode.text.length; i++) {
+                        targetNode.textContent += textNode.text[i];
+                        element.closest('.chat-messages')?.scrollTo(0, element.closest('.chat-messages').scrollHeight);
+                        await new Promise(r => setTimeout(r, speed));
+                    }
+                }
+            }
+
+            // Remove cursor
+            const cursor = element.querySelector('.typing-cursor');
+            if (cursor) cursor.remove();
+        }
+
+        function findCorrespondingNode(element, originalNode) {
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            let count = 0;
+
+            // Count the position of the original node
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = element.innerHTML.replace('<span class="typing-cursor"></span>', '');
+            const origWalker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
+            let origNode;
+            let origCount = 0;
+
+            while (origNode = origWalker.nextNode()) {
+                if (origNode.textContent === '') {
+                    origCount++;
+                }
+            }
+
+            // Return the last empty text node
+            while (node = walker.nextNode()) {
+                if (node.textContent === '') {
+                    return node;
+                }
+            }
+
+            // Fallback: find any empty text node
+            const fallbackWalker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+            while (node = fallbackWalker.nextNode()) {
+                if (node.textContent === '' || node === originalNode) {
+                    return node;
+                }
+            }
+
+            return null;
         }
 
         function sendSuggestion(text) {
@@ -929,64 +1154,165 @@
             // Add user message to chat
             addMessage(message, 'user');
             input.value = '';
+            input.style.height = 'auto'; // Reset textarea height
 
-            // Show typing indicator
-            showTyping();
+            // Detect message type and show thinking status
+            const messageType = detectMessageType(message);
+            showThinkingStatus(messageType);
 
             try {
-                const response = await fetch(`${API_URL}/chat`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: message,
-                        session_id: sessionId
-                    })
-                });
+                let requestBody = {
+                    message: message,
+                    session_id: sessionId
+                };
 
-                hideTyping();
+                // If file is selected, send as FormData
+                if (selectedFile) {
+                    const formData = new FormData();
+                    formData.append('message', message);
+                    formData.append('session_id', sessionId);
+                    formData.append('file', selectedFile);
 
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
+                    const response = await fetch(`${API_URL}/chat/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
 
-                const data = await response.json();
+                    hideThinkingStatus();
 
-                // Add assistant response (only if not a blocked message)
-                if (data.message) {
-                    addMessage(data.message, 'assistant', data);
-                }
+                    if (!response.ok) {
+                        throw new Error('File upload failed');
+                    }
 
-                // Update lastMessageId to prevent duplicate from polling
-                const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
-                if (statusResp.ok) {
-                    const statusData = await statusResp.json();
-                    if (statusData.last_message_id) {
-                        lastMessageId = statusData.last_message_id;
-                        displayedMessageIds.add(statusData.last_message_id);
+                    const data = await response.json();
+                    if (data.message) {
+                        await addMessageWithTypingEffect(data.message, 'assistant');
+                    }
+                } else {
+                    const response = await fetch(`${API_URL}/chat`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    hideThinkingStatus();
+
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+
+                    const data = await response.json();
+
+                    // Add assistant response with typing effect
+                    if (data.message) {
+                        await addMessageWithTypingEffect(data.message, 'assistant');
+                    }
+
+                    // Update lastMessageId to prevent duplicate from polling
+                    const statusResp = await fetch(`${API_URL}/chat/status/${sessionId}`);
+                    if (statusResp.ok) {
+                        const statusData = await statusResp.json();
+                        if (statusData.last_message_id) {
+                            lastMessageId = statusData.last_message_id;
+                            displayedMessageIds.add(statusData.last_message_id);
+                        }
+                    }
+
+                    // Check if waiting for manager - only show notification ONCE
+                    if (data.data && data.data.status === 'waiting_manager' && !managerJoined && !waitingNotificationShown) {
+                        updateStatus('waiting_manager');
+                        showSystemNotification('🟡 Ожидаем подключения менеджера...');
+                        waitingNotificationShown = true;
+                        startPolling();
+                    } else if (data.data && (data.data.status === 'waiting_manager' || data.data.status === 'manager_active')) {
+                        // Just start polling if not already started, without showing notification
+                        startPolling();
                     }
                 }
 
-                // Check if waiting for manager - only show notification ONCE
-                if (data.data && data.data.status === 'waiting_manager' && !managerJoined && !waitingNotificationShown) {
-                    updateStatus('waiting_manager');
-                    showSystemNotification('🟡 Ожидаем подключения менеджера...');
-                    waitingNotificationShown = true;
-                    startPolling();
-                } else if (data.data && (data.data.status === 'waiting_manager' || data.data.status === 'manager_active')) {
-                    // Just start polling if not already started, without showing notification
-                    startPolling();
-                }
-
             } catch (error) {
-                hideTyping();
+                hideThinkingStatus();
                 console.error('Error:', error);
-                addMessage('Извините, произошла ошибка. Пожалуйста, попробуйте позже.', 'assistant');
+                await addMessageWithTypingEffect('Извините, произошла ошибка. Пожалуйста, попробуйте позже.', 'assistant');
             }
 
             // Clear file if any
             removeFile();
+        }
+
+        // Add message with typing effect for bot responses
+        async function addMessageWithTypingEffect(text, role) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const avatar = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+            </svg>`;
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div>
+                    <div class="message-content"></div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Get the content element and type the message
+            const contentElement = messageDiv.querySelector('.message-content');
+
+            if (typingEffectEnabled && text.length < 2000) {
+                // Use word-by-word typing for smoother effect
+                await typeMessageByWords(contentElement, text);
+            } else {
+                // For very long messages, show immediately
+                contentElement.innerHTML = formatMessage(text);
+            }
+
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Type message word by word (smoother than character by character)
+        async function typeMessageByWords(element, text, wordDelay = 30) {
+            const formattedText = formatMessage(text);
+
+            // Split by HTML tags and words
+            const parts = formattedText.split(/(<[^>]+>)/);
+            element.innerHTML = '<span class="typing-cursor"></span>';
+
+            let htmlContent = '';
+
+            for (const part of parts) {
+                if (part.startsWith('<') && part.endsWith('>')) {
+                    // HTML tag - add immediately
+                    htmlContent += part;
+                    element.innerHTML = htmlContent + '<span class="typing-cursor"></span>';
+                } else if (part.trim()) {
+                    // Text content - type word by word
+                    const words = part.split(/(\s+)/);
+                    for (const word of words) {
+                        htmlContent += word;
+                        element.innerHTML = htmlContent + '<span class="typing-cursor"></span>';
+                        element.closest('.chat-messages')?.scrollTo(0, element.closest('.chat-messages').scrollHeight);
+                        if (word.trim()) {
+                            await new Promise(r => setTimeout(r, wordDelay));
+                        }
+                    }
+                }
+            }
+
+            // Remove cursor
+            const cursor = element.querySelector('.typing-cursor');
+            if (cursor) cursor.remove();
         }
 
         function addMessage(text, role, data = null) {

@@ -1,10 +1,11 @@
 """API routes for the AI assistant."""
 
 import logging
+import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_async_session
@@ -17,6 +18,10 @@ from app.services.orchestrator import Orchestrator
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Ensure uploads directory exists
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 async def get_orchestrator(
@@ -45,6 +50,56 @@ async def chat(
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/chat/upload", response_model=ChatResponse)
+async def chat_with_file(
+    message: str = Form(""),
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """
+    Chat endpoint with file upload support.
+
+    Accepts files (images, PDFs, documents) and processes them along with the message.
+    """
+    try:
+        # Validate file size (max 5MB)
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large. Maximum size: 5MB")
+
+        # Save file temporarily
+        file_ext = os.path.splitext(file.filename)[1] if file.filename else ""
+        file_id = str(uuid.uuid4())
+        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        # Create message with file info
+        file_info = f"[Прикреплен файл: {file.filename}]"
+        full_message = f"{file_info}\n{message}" if message else file_info
+
+        logger.info(f"File uploaded: {file.filename} ({len(content)} bytes)")
+
+        # Process message with orchestrator
+        response = await orchestrator.process_message(full_message, session_id)
+
+        # Clean up the file after processing
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat upload error: {e}")
+        raise HTTPException(status_code=500, detail="File upload failed")
 
 
 @router.get("/products/search", response_model=ProductSearchResponse)
