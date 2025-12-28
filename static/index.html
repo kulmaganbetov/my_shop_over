@@ -358,16 +358,15 @@
         .thinking-status {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 10px 16px;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px 18px;
             background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(59, 130, 246, 0.1));
             border: 1px solid rgba(99, 102, 241, 0.2);
             border-radius: 12px;
-            font-size: 13px;
+            font-size: 14px;
             color: var(--primary);
             animation: pulse-bg 2s infinite;
-            line-height: 1.4;
-            vertical-align: middle;
         }
 
         @keyframes pulse-bg {
@@ -376,24 +375,28 @@
         }
 
         .thinking-status .spinner {
-            width: 14px;
-            height: 14px;
+            display: inline-block;
+            width: 16px;
+            height: 16px;
             border: 2px solid rgba(99, 102, 241, 0.3);
-            border-top-color: var(--primary);
+            border-top-color: #6366f1;
             border-radius: 50%;
-            animation: spinner-rotate 1s linear infinite;
-            flex-shrink: 0;
-            position: relative;
-            top: 1px;
+            -webkit-animation: spinnerAnim 0.8s linear infinite !important;
+            animation: spinnerAnim 0.8s linear infinite !important;
+        }
+
+        @-webkit-keyframes spinnerAnim {
+            from { -webkit-transform: rotate(0deg); transform: rotate(0deg); }
+            to { -webkit-transform: rotate(360deg); transform: rotate(360deg); }
+        }
+
+        @keyframes spinnerAnim {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         .thinking-status span {
-            line-height: 14px;
-        }
-
-        @keyframes spinner-rotate {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            font-weight: 500;
         }
 
         /* Uploaded image in chat */
