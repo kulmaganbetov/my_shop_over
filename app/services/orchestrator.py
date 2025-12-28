@@ -639,6 +639,7 @@ class Orchestrator:
             "storage": "накопителя",
             "psu": "блока питания",
             "case": "корпуса",
+            "cooler": "кулера",
         }
         display_name = component_names.get(comp_type, comp_type)
 

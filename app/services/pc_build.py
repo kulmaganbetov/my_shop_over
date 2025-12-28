@@ -60,6 +60,60 @@ COMPONENT_TYPES = {
     "cooler": ("Кулеры для процессоров", ["Кулеры для процессоров", "Кулеры"]),
 }
 
+# Mapping from Russian names to English keys
+COMPONENT_NAME_MAPPING = {
+    # CPU
+    "процессор": "cpu",
+    "проц": "cpu",
+    "cpu": "cpu",
+    "цп": "cpu",
+    # GPU
+    "видеокарта": "gpu",
+    "видеокарту": "gpu",
+    "видюха": "gpu",
+    "gpu": "gpu",
+    "графика": "gpu",
+    # Motherboard
+    "материнская плата": "motherboard",
+    "материнка": "motherboard",
+    "мать": "motherboard",
+    "motherboard": "motherboard",
+    "мп": "motherboard",
+    # RAM
+    "оперативная память": "ram",
+    "оперативка": "ram",
+    "память": "ram",
+    "ram": "ram",
+    "озу": "ram",
+    # Storage
+    "накопитель": "storage",
+    "ssd": "storage",
+    "диск": "storage",
+    "storage": "storage",
+    "хранилище": "storage",
+    # PSU
+    "блок питания": "psu",
+    "бп": "psu",
+    "psu": "psu",
+    "питание": "psu",
+    # Case
+    "корпус": "case",
+    "кейс": "case",
+    "case": "case",
+    # Cooler
+    "кулер": "cooler",
+    "охлаждение": "cooler",
+    "cooler": "cooler",
+}
+
+
+def normalize_component_type(component_type: str) -> str:
+    """Convert Russian component name to English key."""
+    if not component_type:
+        return ""
+    normalized = component_type.lower().strip()
+    return COMPONENT_NAME_MAPPING.get(normalized, normalized)
+
 
 class PCBuildService:
     """Service for recommending PC builds.
@@ -815,9 +869,17 @@ class PCBuildService:
         Returns:
             tuple: (list of alternatives, optional warning message)
         """
-        component_config = COMPONENT_TYPES.get(component_type)
+        # Normalize Russian component name to English key
+        normalized_type = normalize_component_type(component_type)
+        logger.info(f"[ALTERNATIVES] component_type='{component_type}' -> normalized='{normalized_type}'")
+
+        component_config = COMPONENT_TYPES.get(normalized_type)
         if not component_config:
+            logger.warning(f"[ALTERNATIVES] Unknown component type: {component_type} (normalized: {normalized_type})")
             return [], None
+
+        # Update component_type to normalized version for the rest of the method
+        component_type = normalized_type
 
         db_component_type, search_keywords = component_config
 

@@ -243,8 +243,11 @@ class ToolExecutor:
     async def _tool_get_alternatives(self, params: dict, session_id: str) -> dict:
         """Get alternative components."""
         from app.llm.service import LLMService
+        from app.services.pc_build import normalize_component_type
 
-        component_type = params.get("component_type", "gpu")
+        component_type_raw = params.get("component_type", "gpu")
+        # Normalize Russian name to English key (e.g., "процессор" -> "cpu")
+        component_type = normalize_component_type(component_type_raw)
         preference = params.get("preference")
 
         context = await self._get_context(session_id)
@@ -263,10 +266,10 @@ class ToolExecutor:
 
         alternatives_data = [alt.model_dump() for alt in alternatives]
 
-        # Save for selection
+        # Save for selection (use normalized English key)
         await self._update_context(session_id, {
             "last_alternatives": alternatives_data,
-            "last_component_type": component_type,
+            "last_component_type": component_type,  # Normalized key for build dict
         })
 
         result = {
