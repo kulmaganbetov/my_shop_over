@@ -381,14 +381,19 @@
             border: 2px solid rgba(99, 102, 241, 0.3);
             border-top-color: var(--primary);
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            animation: spinner-rotate 1s linear infinite;
             flex-shrink: 0;
-            align-self: center;
-            margin-top: 1px;
+            position: relative;
+            top: 1px;
         }
 
         .thinking-status span {
             line-height: 14px;
+        }
+
+        @keyframes spinner-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         /* Uploaded image in chat */
@@ -415,10 +420,6 @@
             max-height: 80px;
             border-radius: 8px;
             object-fit: cover;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
         }
 
         /* Typing effect cursor */
