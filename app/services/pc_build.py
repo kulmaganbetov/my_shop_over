@@ -892,19 +892,47 @@ class PCBuildService:
         # Parse preference for manufacturer and price hints
         preference_lower = (preference or "").lower()
         wants_cheaper = any(word in preference_lower for word in ["дешев", "cheap", "бюджет"])
-        wants_better = any(word in preference_lower for word in ["дорож", "лучш", "better", "мощн"])
+        wants_better = any(word in preference_lower for word in ["дорож", "лучш", "better", "мощн", "больше"])
 
-        # Manufacturer preference
-        wants_intel = any(word in preference_lower for word in ["intel", "интел", "core"])
-        wants_amd = any(word in preference_lower for word in ["amd", "амд", "ryzen", "райзен"])
+        # Manufacturer preference (with Russian transliterations)
+        wants_intel = any(word in preference_lower for word in [
+            "intel", "интел", "core", "кор", "кор ай", "core i"
+        ])
+        wants_amd = any(word in preference_lower for word in [
+            "amd", "амд", "ryzen", "райзен", "ризен"
+        ])
+
+        # Model line preference (i3, i5, i7, i9, Ryzen 3/5/7/9)
+        model_filters = []
+        # Intel Core models
+        if any(x in preference_lower for x in ["i9", "ай 9", "ай9", "core i9", "кор ай 9"]):
+            model_filters = ["i9", "core i9"]
+        elif any(x in preference_lower for x in ["i7", "ай 7", "ай7", "core i7", "кор ай 7"]):
+            model_filters = ["i7", "core i7"]
+        elif any(x in preference_lower for x in ["i5", "ай 5", "ай5", "core i5", "кор ай 5"]):
+            model_filters = ["i5", "core i5"]
+        elif any(x in preference_lower for x in ["i3", "ай 3", "ай3", "core i3", "кор ай 3"]):
+            model_filters = ["i3", "core i3"]
+        # AMD Ryzen models
+        elif any(x in preference_lower for x in ["ryzen 9", "райзен 9", "ризен 9"]):
+            model_filters = ["ryzen 9"]
+        elif any(x in preference_lower for x in ["ryzen 7", "райзен 7", "ризен 7"]):
+            model_filters = ["ryzen 7"]
+        elif any(x in preference_lower for x in ["ryzen 5", "райзен 5", "ризен 5"]):
+            model_filters = ["ryzen 5"]
+        elif any(x in preference_lower for x in ["ryzen 3", "райзен 3", "ризен 3"]):
+            model_filters = ["ryzen 3"]
+
+        logger.info(f"[ALTERNATIVES] preference='{preference}' wants_intel={wants_intel} wants_amd={wants_amd} model_filters={model_filters}")
 
         if current_price > 0:
             if wants_cheaper:
                 min_budget = int(current_price * 0.2)
                 max_budget = int(current_price * 0.95)
-            elif wants_better:
-                min_budget = int(current_price * 1.05)
-                max_budget = int(current_price * 3.0)
+            elif wants_better or model_filters:
+                # Expand range significantly when specific model requested or wants better
+                min_budget = int(current_price * 0.5)
+                max_budget = int(current_price * 5.0)  # Allow much higher for upgrades
             else:
                 min_budget = int(current_price * 0.5)
                 max_budget = int(current_price * 2.0)
@@ -976,6 +1004,11 @@ class PCBuildService:
                     continue
             if wants_amd:
                 if "intel" in name_lower or "core i" in name_lower:
+                    continue
+
+            # Model line filter (i3, i5, i7, i9, Ryzen 3/5/7/9)
+            if model_filters and component_type == "cpu":
+                if not any(model in name_lower for model in model_filters):
                     continue
 
             # Component-specific compatibility (skip if platform change requested)

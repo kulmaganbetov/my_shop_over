@@ -78,18 +78,20 @@ TOOLS = [
     {
         "name": "get_alternatives",
         "description": "Получить альтернативные варианты для компонента сборки. "
-                       "Используй для: 'замени видеокарту', 'другой процессор', 'подешевле процессор'.",
+                       "Используй для: 'замени видеокарту', 'другой процессор', 'подешевле процессор', "
+                       "'нужен Core i5', 'хочу Ryzen 7'.",
         "parameters": {
             "type": "object",
             "properties": {
                 "component_type": {
                     "type": "string",
-                    "enum": ["cpu", "gpu", "motherboard", "ram", "storage", "psu", "case", "cooler"],
+                    "enum": ["cpu", "gpu", "motherboard", "ram", "storage", "psu", "case", "cooler",
+                             "процессор", "видеокарта", "материнка", "память", "накопитель", "бп", "корпус", "кулер"],
                     "description": "Тип компонента для замены"
                 },
                 "preference": {
                     "type": "string",
-                    "description": "Предпочтение: дешевле, дороже, Intel, AMD, конкретная модель"
+                    "description": "Предпочтение: дешевле, дороже, Intel, AMD, Core i5, Core i7, Ryzen 5, Ryzen 7 и т.д. ПЕРЕДАВАЙ ПОЛНЫЙ ТЕКСТ ЗАПРОСА!"
                 }
             },
             "required": ["component_type"]
@@ -113,18 +115,20 @@ TOOLS = [
     {
         "name": "add_peripheral",
         "description": "Добавить периферию к сборке (мышь, клавиатура, монитор). "
-                       "Используй для: 'добавь мышку', 'нужен монитор', 'покажи клавиатуры'.",
+                       "Используй для: 'добавь мышку', 'нужен монитор', 'покажи клавиатуры'. "
+                       "ВАЖНО: если показана периферия и пользователь говорит 'дешевле'/'дороже' - "
+                       "используй этот инструмент снова с другим бюджетом!",
         "parameters": {
             "type": "object",
             "properties": {
                 "peripheral_type": {
                     "type": "string",
-                    "enum": ["mouse", "keyboard", "monitor", "headset", "mousepad", "webcam"],
+                    "enum": ["mouse", "keyboard", "monitor", "headset", "mousepad", "webcam", "монитор", "мышь", "клавиатура", "наушники"],
                     "description": "Тип периферии"
                 },
                 "budget": {
                     "type": "number",
-                    "description": "Бюджет на периферию в тенге"
+                    "description": "Максимальный бюджет на периферию в тенге. Для 'дешевле' - меньше текущих цен."
                 }
             },
             "required": ["peripheral_type"]
