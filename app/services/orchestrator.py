@@ -595,15 +595,24 @@ class Orchestrator:
         # Add peripherals if present
         peripherals = data.get("peripherals", {})
         if peripherals:
+            peripheral_names = {
+                "monitor": "Монитор",
+                "mouse": "Мышь",
+                "keyboard": "Клавиатура",
+                "headset": "Гарнитура",
+                "mousepad": "Коврик",
+                "webcam": "Веб-камера",
+            }
             lines.append("\n**Периферия:**")
             for ptype, p in peripherals.items():
                 if p:
+                    display_name = peripheral_names.get(ptype, ptype.capitalize())
                     name = p.get("name", "")[:50]
                     price = p.get("price", 0)
                     discount = p.get("discount_price", 0)
                     total += discount or price
                     total_installment += price
-                    lines.append(f"• {ptype}: {name}")
+                    lines.append(f"• **{display_name}**: {name}")
                     lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
 
         lines.append(f"\n**Итого картой: {total:,.0f} ₸**")

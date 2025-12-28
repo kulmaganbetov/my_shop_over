@@ -14,6 +14,47 @@ from app.services.product_search import ProductSearchService
 
 logger = logging.getLogger(__name__)
 
+# Mapping from Russian peripheral names to English keys
+PERIPHERAL_NAME_MAPPING = {
+    # Monitor
+    "монитор": "monitor",
+    "дисплей": "monitor",
+    "экран": "monitor",
+    "monitor": "monitor",
+    # Mouse
+    "мышь": "mouse",
+    "мышка": "mouse",
+    "мышку": "mouse",
+    "mouse": "mouse",
+    # Keyboard
+    "клавиатура": "keyboard",
+    "клавиатуру": "keyboard",
+    "клава": "keyboard",
+    "keyboard": "keyboard",
+    # Headset
+    "наушники": "headset",
+    "гарнитура": "headset",
+    "гарнитуру": "headset",
+    "headset": "headset",
+    # Mousepad
+    "коврик": "mousepad",
+    "коврик для мыши": "mousepad",
+    "mousepad": "mousepad",
+    # Webcam
+    "веб-камера": "webcam",
+    "вебкамера": "webcam",
+    "камера": "webcam",
+    "webcam": "webcam",
+}
+
+
+def normalize_peripheral_type(peripheral_type: str) -> str:
+    """Convert Russian peripheral name to English key."""
+    if not peripheral_type:
+        return "mouse"
+    normalized = peripheral_type.lower().strip()
+    return PERIPHERAL_NAME_MAPPING.get(normalized, normalized)
+
 
 class ToolExecutor:
     """Executes backend tools and returns structured results."""
@@ -377,8 +418,12 @@ class ToolExecutor:
 
     async def _tool_add_peripheral(self, params: dict, session_id: str) -> dict:
         """Add peripheral to build."""
-        peripheral_type = params.get("peripheral_type", "mouse")
+        peripheral_type_raw = params.get("peripheral_type", "mouse")
+        # Normalize Russian name to English key (e.g., "монитор" -> "monitor")
+        peripheral_type = normalize_peripheral_type(peripheral_type_raw)
         budget = params.get("budget")
+
+        logger.info(f"[PERIPHERAL] type='{peripheral_type_raw}' -> normalized='{peripheral_type}'")
 
         # Map types to categories
         categories = {
@@ -405,6 +450,7 @@ class ToolExecutor:
 
         products_data = [ProductSchema.model_validate(p).model_dump() for p in products]
 
+        # Store normalized type for later selection
         await self._update_context(session_id, {
             "last_peripherals": products_data,
             "last_peripheral_type": peripheral_type,
