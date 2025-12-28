@@ -516,15 +516,18 @@ class Orchestrator:
                 return "Сборка не найдена."
             lines = ["Ваша сборка:\n"]
             total = 0
+            total_installment = 0
             for comp_type, comp in build.items():
                 if comp:
                     name = comp.get("name", "")[:50]
                     price = comp.get("price", 0)
                     discount = comp.get("discount_price", 0)
                     total += discount or price
+                    total_installment += price
                     lines.append(f"• {comp_type.upper()}: {name}")
                     lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
-            lines.append(f"**Итого картой: {total:,.0f} ₸**")
+            lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
+            lines.append(f"**Итого в рассрочку: {total_installment:,.0f} ₸**")
             return "\n".join(lines)
 
         if "alternatives" in data:
@@ -563,6 +566,7 @@ class Orchestrator:
 
         lines = ["**Ваша сборка ПК:**\n"]
         total = 0
+        total_installment = 0
 
         # Component display order and names
         component_names = {
@@ -583,6 +587,7 @@ class Orchestrator:
                 price = comp.get("price", 0)
                 discount = comp.get("discount_price", 0)
                 total += discount or price
+                total_installment += price
                 display_name = component_names.get(comp_type, comp_type.upper())
                 lines.append(f"• **{display_name}**: {name}")
                 lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
@@ -597,10 +602,12 @@ class Orchestrator:
                     price = p.get("price", 0)
                     discount = p.get("discount_price", 0)
                     total += discount or price
+                    total_installment += price
                     lines.append(f"• {ptype}: {name}")
                     lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
 
         lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
+        lines.append(f"**Итого в рассрочку: {total_installment:,.0f} ₸**")
 
         # Show warnings
         warnings = data.get("warnings", [])

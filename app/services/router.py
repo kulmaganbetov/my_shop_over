@@ -694,16 +694,19 @@ class IntentRouter:
         # Format build
         lines = ["Ваша текущая сборка:\n"]
         total = 0
+        total_installment = 0
         for comp_type, comp in current_build["build"].items():
             if comp:
                 name = comp.get("name", "")[:50]
                 price = comp.get("price", 0)
                 discount = comp.get("discount_price", 0)
                 total += discount or price
+                total_installment += price
                 lines.append(f"• {comp_type.upper()}: {name}")
                 lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
 
-        lines.append(f"**Итого картой: {total:,.0f} ₸**")
+        lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
+        lines.append(f"**Итого в рассрочку: {total_installment:,.0f} ₸**")
 
         return ChatResponse(
             message="\n".join(lines),
