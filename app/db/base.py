@@ -20,6 +20,10 @@ async_engine = create_async_engine(
     settings.database_url,
     echo=False,  # Disable SQL logging - too verbose
     pool_pre_ping=True,
+    pool_size=20,  # Base pool size for concurrent connections
+    max_overflow=10,  # Extra connections when pool is full
+    pool_timeout=30,  # Seconds to wait for available connection
+    pool_recycle=1800,  # Recycle connections after 30 minutes
 )
 
 AsyncSessionLocal = async_sessionmaker(

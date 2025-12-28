@@ -7,11 +7,12 @@ from pathlib import Path
 from collections import deque
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
+from time import time
 
 from app.api.routes import router as api_router
 from app.api.admin import router as admin_router
@@ -77,6 +78,51 @@ for noisy_logger in ["httpx", "httpcore", "sqlalchemy", "urllib3", "asyncio"]:
     logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+# Rate limiting configuration
+RATE_LIMIT_REQUESTS = 30  # Max requests per window
+RATE_LIMIT_WINDOW = 60  # Window in seconds
+rate_limit_store: dict = {}  # IP -> (request_count, window_start)
+
+
+def cleanup_rate_limit_store():
+    """Remove expired entries from rate limit store."""
+    current_time = time()
+    expired_ips = [
+        ip for ip, (_, window_start) in rate_limit_store.items()
+        if current_time - window_start > RATE_LIMIT_WINDOW * 2
+    ]
+    for ip in expired_ips:
+        del rate_limit_store[ip]
+
+
+def is_rate_limited(client_ip: str) -> tuple[bool, int]:
+    """Check if client IP is rate limited. Returns (is_limited, remaining)."""
+    current_time = time()
+
+    # Cleanup old entries periodically (every 100 requests)
+    if len(rate_limit_store) > 100:
+        cleanup_rate_limit_store()
+
+    if client_ip not in rate_limit_store:
+        rate_limit_store[client_ip] = (1, current_time)
+        return False, RATE_LIMIT_REQUESTS - 1
+
+    count, window_start = rate_limit_store[client_ip]
+
+    # Reset window if expired
+    if current_time - window_start > RATE_LIMIT_WINDOW:
+        rate_limit_store[client_ip] = (1, current_time)
+        return False, RATE_LIMIT_REQUESTS - 1
+
+    # Check if limit exceeded
+    if count >= RATE_LIMIT_REQUESTS:
+        return True, 0
+
+    # Increment counter
+    rate_limit_store[client_ip] = (count + 1, window_start)
+    return False, RATE_LIMIT_REQUESTS - count - 1
 
 
 async def check_and_trigger_startup_tasks():
@@ -184,6 +230,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting middleware - limits requests per IP."""
+    # Skip rate limiting for static files and health checks
+    if request.url.path.startswith(("/static", "/uploads", "/docs", "/openapi.json")):
+        return await call_next(request)
+
+    if request.url.path == "/api/v1/health":
+        return await call_next(request)
+
+    # Get client IP (handle proxy headers)
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = request.client.host if request.client else "unknown"
+
+    # Check rate limit
+    is_limited, remaining = is_rate_limited(client_ip)
+
+    if is_limited:
+        logger.warning(f"Rate limit exceeded for IP: {client_ip}")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Слишком много запросов. Пожалуйста, подождите минуту.",
+                "retry_after": RATE_LIMIT_WINDOW
+            },
+            headers={"Retry-After": str(RATE_LIMIT_WINDOW)}
+        )
+
+    # Process request and add rate limit headers
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
+
 
 # Include routers
 app.include_router(api_router, prefix="/api/v1", tags=["chat"])
