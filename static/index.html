@@ -358,7 +358,6 @@
         .thinking-status {
             display: inline-flex;
             align-items: center;
-            justify-content: center;
             gap: 10px;
             padding: 12px 18px;
             background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(59, 130, 246, 0.1));
@@ -366,37 +365,16 @@
             border-radius: 12px;
             font-size: 14px;
             color: var(--primary);
-            animation: pulse-bg 2s infinite;
         }
 
-        @keyframes pulse-bg {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-
-        .thinking-status .spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(99, 102, 241, 0.3);
-            border-top-color: #6366f1;
-            border-radius: 50%;
-            -webkit-animation: spinnerAnim 0.8s linear infinite !important;
-            animation: spinnerAnim 0.8s linear infinite !important;
-        }
-
-        @-webkit-keyframes spinnerAnim {
-            from { -webkit-transform: rotate(0deg); transform: rotate(0deg); }
-            to { -webkit-transform: rotate(360deg); transform: rotate(360deg); }
-        }
-
-        @keyframes spinnerAnim {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+        .thinking-status .spinner-svg {
+            flex-shrink: 0;
+            vertical-align: middle;
         }
 
         .thinking-status span {
             font-weight: 500;
+            line-height: 16px;
         }
 
         /* Uploaded image in chat */
@@ -1064,7 +1042,12 @@
                     </svg>
                 </div>
                 <div class="thinking-status">
-                    <div class="spinner"></div>
+                    <svg class="spinner-svg" width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="10" stroke="rgba(99, 102, 241, 0.3)" stroke-width="3" fill="none"/>
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke="#6366f1" stroke-width="3" fill="none" stroke-linecap="round">
+                            <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                        </path>
+                    </svg>
                     <span id="status-phrase">${phrases[0]}</span>
                 </div>
             `;
