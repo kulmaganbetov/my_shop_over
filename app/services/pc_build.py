@@ -902,6 +902,50 @@ class PCBuildService:
             "amd", "амд", "ryzen", "райзен", "ризен"
         ])
 
+        # GPU/Component brand preferences (MSI, ASUS, Gigabyte, etc.)
+        preferred_brands = []
+        excluded_brands = []
+
+        # Check for brand preferences
+        brand_mapping = {
+            "msi": "msi", "мси": "msi",
+            "asus": "asus", "асус": "asus",
+            "gigabyte": "gigabyte", "гигабайт": "gigabyte",
+            "palit": "palit", "палит": "palit",
+            "evga": "evga",
+            "zotac": "zotac", "зотак": "zotac",
+            "sapphire": "sapphire", "сапфир": "sapphire",
+            "powercolor": "powercolor",
+            "xfx": "xfx",
+            "pny": "pny",
+            "inno3d": "inno3d",
+            "kfa2": "kfa2", "galax": "galax",
+        }
+
+        # Brands to exclude (budget brands)
+        budget_brands = ["afox", "colorful", "maxsun", "huananzhi"]
+
+        for brand_key, brand_val in brand_mapping.items():
+            if brand_key in preference_lower:
+                preferred_brands.append(brand_val)
+
+        # Check for exclusion patterns: "не устраивает", "не нравится", "без"
+        if any(x in preference_lower for x in ["не устраивает", "не нравится", "не хочу", "без "]):
+            for brand in budget_brands:
+                if brand in preference_lower:
+                    excluded_brands.append(brand)
+            # If user says "не устраивает AFOX/Colorful" without specific brands, exclude all budget brands
+            if not excluded_brands and any(b in preference_lower for b in budget_brands):
+                excluded_brands = budget_brands.copy()
+
+        # "с именем", "известный", "топовый" = wants premium brand
+        wants_premium_brand = any(x in preference_lower for x in [
+            "с именем", "известн", "топов", "премиум", "качественн", "нормальн"
+        ])
+        if wants_premium_brand and not preferred_brands:
+            preferred_brands = ["msi", "asus", "gigabyte", "palit", "evga", "zotac", "sapphire"]
+            excluded_brands = budget_brands.copy()
+
         # Model line preference (i3, i5, i7, i9, Ryzen 3/5/7/9)
         model_filters = []
         # Intel Core models
@@ -923,15 +967,15 @@ class PCBuildService:
         elif any(x in preference_lower for x in ["ryzen 3", "райзен 3", "ризен 3"]):
             model_filters = ["ryzen 3"]
 
-        logger.info(f"[ALTERNATIVES] preference='{preference}' wants_intel={wants_intel} wants_amd={wants_amd} model_filters={model_filters}")
+        logger.info(f"[ALTERNATIVES] preference='{preference}' wants_intel={wants_intel} wants_amd={wants_amd} model_filters={model_filters} preferred_brands={preferred_brands} excluded_brands={excluded_brands}")
 
         if current_price > 0:
             if wants_cheaper:
                 min_budget = int(current_price * 0.2)
                 max_budget = int(current_price * 0.95)
-            elif wants_better or model_filters:
-                # Expand range significantly when specific model requested or wants better
-                min_budget = int(current_price * 0.5)
+            elif wants_better or model_filters or preferred_brands:
+                # Expand range significantly when specific model/brand requested
+                min_budget = int(current_price * 0.3)
                 max_budget = int(current_price * 5.0)  # Allow much higher for upgrades
             else:
                 min_budget = int(current_price * 0.5)
@@ -998,12 +1042,21 @@ class PCBuildService:
             if "внешний" in name_lower or "external" in name_lower:
                 continue
 
-            # Manufacturer filter
+            # Manufacturer filter (Intel/AMD)
             if wants_intel:
                 if "amd" in name_lower or "ryzen" in name_lower:
                     continue
             if wants_amd:
                 if "intel" in name_lower or "core i" in name_lower:
+                    continue
+
+            # Brand filter (MSI, ASUS, Gigabyte, etc.)
+            if excluded_brands:
+                if any(brand in name_lower for brand in excluded_brands):
+                    continue
+
+            if preferred_brands:
+                if not any(brand in name_lower for brand in preferred_brands):
                     continue
 
             # Model line filter (i3, i5, i7, i9, Ryzen 3/5/7/9)

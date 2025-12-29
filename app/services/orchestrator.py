@@ -61,6 +61,10 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - "покажи видеокарты", "найди мышку", "хочу купить"
    - "RTX 4070", "мониторы до 200000"
    - Слова: "покажи", "найди", "купить", "отдельно"
+   - ВАЖНО: Если пользователь спрашивает о КОНКРЕТНОМ товаре по названию/модели:
+     * "Gigabyte A520M" → search_products с query="Gigabyte A520M"
+     * "в наличии?" после названия → search_products с query=название_товара
+     * "цену скажи?" → search_products если есть конкретный товар в запросе
 
    **Фильтры:**
    - RTX/GeForce/GTX → manufacturer="NVIDIA"
@@ -68,8 +72,13 @@ ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-ма
    - видеокарта → category="Видеокарты"
 
 4. **get_alternatives** - ЗАМЕНА компонента В СБОРКЕ:
-   - ТОЛЬКО слова: "замени", "поменяй", "смени"
+   - Слова: "замени", "поменяй", "смени"
    - ТОЛЬКО если есть сборка!
+   - ВАЖНО: Если показаны альтернативы и пользователь НЕДОВОЛЕН:
+     * "не нравится AFOX", "не устраивает бренд" → get_alternatives с preference="не устраивает AFOX, хочу другой бренд"
+     * "хочу MSI/ASUS/Gigabyte" → get_alternatives с preference="MSI" (или указанный бренд)
+     * "производитель с именем" → get_alternatives с preference="хочу производителя с именем"
+   - НЕ ВОЗВРАЩАЙ КЭШИРОВАННЫЕ АЛЬТЕРНАТИВЫ - делай новый поиск!
 
 5. **clarify_intent** - ТОЛЬКО когда действительно непонятно:
    - Одно слово типа "процессор" без контекста
@@ -786,9 +795,20 @@ class Orchestrator:
             lines.append(f"- Последний поиск: {count} товаров")
 
         if context.get("last_alternatives"):
-            count = len(context["last_alternatives"])
+            alts = context["last_alternatives"]
+            count = len(alts)
             comp = context.get("last_component_type", "")
-            lines.append(f"- Показаны альтернативы для {comp}: {count} вариантов")
+            # Extract brand names from alternatives
+            brands = set()
+            for alt in alts[:5]:
+                name = alt.get("name", "").lower()
+                for brand in ["afox", "colorful", "msi", "asus", "gigabyte", "palit", "zotac", "sapphire", "evga"]:
+                    if brand in name:
+                        brands.add(brand.upper())
+                        break
+            brands_str = ", ".join(sorted(brands)) if brands else "разные"
+            lines.append(f"- Показаны альтернативы для {comp}: {count} вариантов (бренды: {brands_str})")
+            lines.append(f"  Если пользователь недоволен - вызови get_alternatives с новым preference!")
 
         if context.get("last_peripherals"):
             count = len(context["last_peripherals"])
