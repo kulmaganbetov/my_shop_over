@@ -81,8 +81,9 @@ logger = logging.getLogger(__name__)
 
 
 # Rate limiting configuration
-RATE_LIMIT_REQUESTS = 30  # Max requests per window
+RATE_LIMIT_REQUESTS = 60  # Max requests per window (increased from 30)
 RATE_LIMIT_WINDOW = 60  # Window in seconds
+RATE_LIMIT_LOCALHOST = 300  # Higher limit for localhost/admin
 rate_limit_store: dict = {}  # IP -> (request_count, window_start)
 
 
@@ -97,7 +98,7 @@ def cleanup_rate_limit_store():
         del rate_limit_store[ip]
 
 
-def is_rate_limited(client_ip: str) -> tuple[bool, int]:
+def is_rate_limited(client_ip: str, limit: int = RATE_LIMIT_REQUESTS) -> tuple[bool, int]:
     """Check if client IP is rate limited. Returns (is_limited, remaining)."""
     current_time = time()
 
@@ -107,22 +108,22 @@ def is_rate_limited(client_ip: str) -> tuple[bool, int]:
 
     if client_ip not in rate_limit_store:
         rate_limit_store[client_ip] = (1, current_time)
-        return False, RATE_LIMIT_REQUESTS - 1
+        return False, limit - 1
 
     count, window_start = rate_limit_store[client_ip]
 
     # Reset window if expired
     if current_time - window_start > RATE_LIMIT_WINDOW:
         rate_limit_store[client_ip] = (1, current_time)
-        return False, RATE_LIMIT_REQUESTS - 1
+        return False, limit - 1
 
     # Check if limit exceeded
-    if count >= RATE_LIMIT_REQUESTS:
+    if count >= limit:
         return True, 0
 
     # Increment counter
     rate_limit_store[client_ip] = (count + 1, window_start)
-    return False, RATE_LIMIT_REQUESTS - count - 1
+    return False, limit - count - 1
 
 
 async def check_and_trigger_startup_tasks():
@@ -242,13 +243,21 @@ async def rate_limit_middleware(request: Request, call_next):
     if request.url.path == "/api/v1/health":
         return await call_next(request)
 
+    # Skip rate limiting for admin routes (admin has auth)
+    if request.url.path.startswith("/api/v1/admin"):
+        return await call_next(request)
+
     # Get client IP (handle proxy headers)
     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
     if not client_ip:
         client_ip = request.client.host if request.client else "unknown"
 
+    # Higher limit for localhost (development/testing)
+    is_localhost = client_ip in ("127.0.0.1", "localhost", "::1")
+    limit = RATE_LIMIT_LOCALHOST if is_localhost else RATE_LIMIT_REQUESTS
+
     # Check rate limit
-    is_limited, remaining = is_rate_limited(client_ip)
+    is_limited, remaining = is_rate_limited(client_ip, limit)
 
     if is_limited:
         logger.warning(f"Rate limit exceeded for IP: {client_ip}")
@@ -263,7 +272,7 @@ async def rate_limit_middleware(request: Request, call_next):
 
     # Process request and add rate limit headers
     response = await call_next(request)
-    response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+    response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
     return response
 
