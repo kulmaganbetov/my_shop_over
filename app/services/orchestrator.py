@@ -1,169 +1,57 @@
-"""LLM Orchestrator - uses LLM to decide which tools to call.
+"""LLM Orchestrator - simplified with keyword matching first.
 
 Architecture:
-1. User message + context → LLM decides which tool to call
-2. Tool is executed → returns structured data
-3. Data + user message → LLM formats nice response
+1. Keyword matching for obvious intents (90% of cases)
+2. LLM only for ambiguous cases
+3. State machine tracks conversation flow
+4. Context-aware continuation for дороже/дешевле
 """
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import ChatRepository
 from app.llm.client import get_llm_client
-from app.llm.tools import TOOLS, get_tools_for_prompt
 from app.schemas.chat import ChatResponse
-from app.schemas.llm import Intent
+from app.schemas.llm import Intent as LegacyIntent
+from app.services.conversation import (
+    ConversationContext,
+    ConversationState,
+    Intent,
+    LastAction,
+    detect_intent_from_keywords,
+)
 from app.services.tools import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
-# System prompt for the orchestrator
-ORCHESTRATOR_SYSTEM_PROMPT = """Ты AI-ассистент интернет-магазина компьютерной техники over-shop.kz.
-Твоя задача - понять запрос пользователя и выбрать нужную функцию для выполнения.
 
-{tools}
+# LLM prompt for ambiguous cases only
+AMBIGUOUS_INTENT_PROMPT = """Ты классификатор интентов для магазина компьютерной техники over-shop.kz.
 
-## ВАЖНЕЙШЕЕ ПРАВИЛО - ОТВЕЧАЙ НА ВОПРОСЫ:
-Если пользователь ЗАДАЁТ ВОПРОС (есть "?", "нужно ли", "совместимы", "можно ли", "сколько", "почему", "уточни", "подскажи", "посоветуй") → используй **general_response** и ОТВЕТЬ ТЕКСТОМ!
+Определи намерение пользователя. Верни ТОЛЬКО JSON:
+{{"intent": "название", "params": {{}}}}
 
-Примеры вопросов → general_response:
-- "нужно ли добавить вентиляторов?" → general_response (ответь советом!)
-- "совместимы ли эти компоненты?" → general_response (ответь да/нет + объяснение)
-- "ты уверен в этом выборе?" → general_response (объясни выбор)
-- "почему ты выбрал эту видеокарту?" → general_response (объясни)
-- "что такое OEM процессор?" → general_response (объясни)
-- "посоветуй, нужен ли кулер?" → general_response (дай совет!)
+Доступные интенты:
+- search_product: поиск товаров (query, category)
+- build_pc: сборка ПК (budget, purpose)
+- modify_build: изменить бюджет сборки (modifier: higher/lower)
+- replace_component: заменить компонент (component_type, preference)
+- add_peripheral: добавить периферию (peripheral_type)
+- ask_question: вопрос о товарах/магазине
+- delivery_info: доставка/оплата/адреса (topic)
+- call_manager: вызов менеджера
+- greeting: приветствие
 
-НЕ ДЕЛАЙ поиск или сборку, когда пользователь задаёт вопрос!
-
-## Правила выбора функции:
-
-1. **build_pc** - когда пользователь ЯВНО хочет собрать/пересобрать компьютер:
-   - "собери пк", "хочу сборку", "нужен компьютер", "пк для игр"
-   - "соберите мне компьютер за 500000"
-   - "бюджет увеличился на X" / "добавил X к бюджету" → build_pc с budget = предыдущий_бюджет + X
-   - "сделай новый расчет" + упоминание бюджета → build_pc
-
-   **РАСЧЁТ БЮДЖЕТА:**
-   - "бюджет увеличился на 200000" при текущей сборке 500000 → budget = 700000
-   - "добавил 50000 к бюджету" при текущей сборке 500000 → budget = 550000
-   - ВСЕГДА считай: новый_бюджет = старый_бюджет + добавка
-
-2. **modify_build** - ОТНОСИТЕЛЬНОЕ изменение бюджета (без суммы):
-   - "дороже", "дешевле", "более дорогую", "подешевле"
-   - ТОЛЬКО если уже есть сборка!
-
-3. **search_products** - поиск товаров для ПОКУПКИ:
-   - "покажи видеокарты", "найди мышку", "хочу купить"
-   - "RTX 4070", "мониторы до 200000"
-   - Слова: "покажи", "найди", "купить", "отдельно"
-   - ВАЖНО: Если пользователь спрашивает о КОНКРЕТНОМ товаре по названию/модели:
-     * "Gigabyte A520M" → search_products с query="Gigabyte A520M"
-     * "в наличии?" после названия → search_products с query=название_товара
-     * "цену скажи?" → search_products если есть конкретный товар в запросе
-
-   **Фильтры:**
-   - RTX/GeForce/GTX → manufacturer="NVIDIA"
-   - AMD/Radeon/RX → manufacturer="AMD"
-   - видеокарта → category="Видеокарты"
-
-4. **get_alternatives** - ЗАМЕНА компонента В СБОРКЕ:
-   - Слова: "замени", "поменяй", "смени"
-   - ТОЛЬКО если есть сборка!
-   - ВАЖНО: Если показаны альтернативы и пользователь НЕДОВОЛЕН:
-     * "не нравится AFOX", "не устраивает бренд" → get_alternatives с preference="не устраивает AFOX, хочу другой бренд"
-     * "хочу MSI/ASUS/Gigabyte" → get_alternatives с preference="MSI" (или указанный бренд)
-     * "производитель с именем" → get_alternatives с preference="хочу производителя с именем"
-   - НЕ ВОЗВРАЩАЙ КЭШИРОВАННЫЕ АЛЬТЕРНАТИВЫ - делай новый поиск!
-
-5. **clarify_intent** - ТОЛЬКО когда действительно непонятно:
-   - Одно слово типа "процессор" без контекста
-   - НЕ ИСПОЛЬЗУЙ если пользователь задаёт вопрос!
-   - НЕ ИСПОЛЬЗУЙ если пользователь говорит "отдельно", "купить", "добавить"
-
-6. **select_item** - выбор из списка: "1", "первый", "выбираю второй"
-
-7. **add_peripheral** - добавить периферию к сборке:
-   - "добавь монитор", "нужна мышка", "покажи клавиатуры"
-   - ВАЖНО: "дешевле"/"дороже" ПОСЛЕ показа периферии → повтор add_peripheral с бюджетом!
-   - Если в контексте есть last_peripherals и пользователь говорит "дешевле" → add_peripheral
-
-8. **show_current_build** - "покажи сборку", "моя конфигурация"
-
-9. **get_delivery_info** - информация о магазинах, доставке:
-   - "телефон" → topic="phone"
-   - "адрес" → topic="address"
-   - "режим работы", "открыто" → topic="hours"
-   - "Павлодар" → topic="pavlodar"
-
-10. **call_manager** - "позвоните", "нужен менеджер"
-
-11. **general_response** - ДЛЯ ВСЕХ ВОПРОСОВ И ДИАЛОГОВ:
-    - Любые вопросы о товарах, совместимости, советы
-    - "привет", "спасибо", объяснения
-    - Когда нужно дать текстовый ответ, а не выполнить действие
-
-## Формат ответа (ТОЛЬКО JSON):
-```json
-{{
-  "tool": "имя_функции",
-  "params": {{параметры}},
-  "reasoning": "почему выбрана эта функция"
-}}
-```
-
-## Контекст сессии:
-{context}
-
-## КРИТИЧЕСКИ ВАЖНО:
-1. Если есть "?" в сообщении - скорее всего нужен general_response
-2. ВСЕГДА считай бюджет: новый = старый + добавка
-3. clarify_intent - КРАЙНЯЯ мера, только если совсем непонятно
-4. Не делай поиск когда нужен текстовый ответ
-"""
-
-# Response formatting prompt
-RESPONSE_FORMAT_PROMPT = """Ты AI-консультант магазина over-shop.kz.
-
-## Формат ответа (СТРОГО):
-1. Короткое вступление (1 строка, по-человечески)
-2. Чёткий ответ по сути
-3. 1 предложение «почему» (объяснение выбора)
-
-## Правила:
-- Пиши кратко и уверенно
-- ВСЕГДА объясняй «почему именно это» — это главное!
-- Используй **жирный** для важного
-- Цены: Рассрочка: X ₸ | Картой: Y ₸
-
-## ЗАПРЕЩЕНО:
-- Лекции и длинные объяснения
-- Абстрактные советы
-- Фразы «я не могу», «к сожалению»
-- Извинения
-
-## РАЗРЕШЕНО:
-- Уверенное «рекомендую», «советую»
-- Короткое объяснение выбора
-- Предложение альтернатив
-
-## Данные:
-{data}
-
-## Запрос пользователя:
-{user_message}
-
-## История чата:
-{chat_history}
-"""
+Контекст: {context}
+Сообщение: {message}"""
 
 
 class Orchestrator:
-    """LLM-based orchestrator that routes requests to backend tools."""
+    """Simplified orchestrator with keyword matching first."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -176,32 +64,30 @@ class Orchestrator:
         message: str,
         session_id: str,
     ) -> ChatResponse:
-        """Process user message using LLM orchestration."""
-        # Ensure session exists
+        """Process user message."""
+        # Get or create session
         chat_session = await self.chat_repo.get_or_create_session(session_id)
 
-        # CRITICAL: Check if session is handled by manager (bot should NOT respond)
+        # Check manager mode - bot should NOT respond
         if chat_session.status in ["waiting_manager", "manager_active"]:
-            # Store user message but don't process with bot
             await self.chat_repo.add_message(
                 session_id=session_id,
                 role="user",
                 content=message,
             )
-            logger.info(f"[BLOCKED] Session {session_id} waiting for manager, message stored")
-
+            logger.info(f"[MANAGER] Session {session_id} in manager mode, message stored")
             return ChatResponse(
-                message="⏳ Ваш диалог передан менеджеру. Ожидайте ответа.\n\n"
+                message="Ваш диалог передан менеджеру. Ожидайте ответа.\n\n"
                         "Менеджер ответит вам в ближайшее время.\n"
-                        "📞 Срочно: +7 771 013-00-20",
-                intent=Intent.GENERAL,
+                        "Срочно: +7 771 013-00-20",
+                intent=LegacyIntent.GENERAL,
                 session_id=session_id,
                 data={"status": "waiting_manager"},
             )
 
-        # Get chat history and context
+        # Load conversation context
+        context = await self._load_context(session_id)
         chat_history = await self._get_chat_history(session_id)
-        context = await self._get_context(session_id)
 
         # Store user message
         await self.chat_repo.add_message(
@@ -210,90 +96,261 @@ class Orchestrator:
             content=message,
         )
 
-        # Step 1: LLM decides which tool to call
-        tool_decision = await self._decide_tool(message, context, chat_history)
+        # Step 1: Detect intent (keyword matching first)
+        intent, params = detect_intent_from_keywords(message, context)
 
-        tool_name = tool_decision.get("tool", "general_response")
-        params = tool_decision.get("params", {})
-        reasoning = tool_decision.get("reasoning", "")
+        # Step 2: If unknown, use LLM
+        if intent == Intent.UNKNOWN:
+            intent, params = await self._detect_intent_llm(message, context, chat_history)
 
-        logger.info(f"[CHAT] User: {message[:50]}...")
-        logger.info(f"[TOOL] {tool_name} | params={params}")
-        if reasoning:
-            logger.debug(f"[WHY] {reasoning}")
+        logger.info(f"[INTENT] {intent.value} | params={params}")
 
-        # Step 2: Execute the tool
-        tool_result = await self.tool_executor.execute(tool_name, params, session_id)
+        # Step 3: Execute intent
+        tool_name, tool_params = self._intent_to_tool(intent, params, context)
+        tool_result = await self.tool_executor.execute(tool_name, tool_params, session_id)
 
         if tool_result.get("success"):
-            logger.info(f"[OK] {tool_name} executed successfully")
+            logger.info(f"[OK] {tool_name}")
         else:
             logger.error(f"[FAIL] {tool_name}: {tool_result.get('error')}")
 
-        # Step 3: Format the response
+        # Step 4: Update context based on action
+        await self._update_context_after_action(session_id, intent, tool_result, context)
+
+        # Step 5: Format response
         response_text = await self._format_response(
+            intent=intent,
             tool_name=tool_name,
             tool_result=tool_result,
             user_message=message,
             chat_history=chat_history,
+            context=context,
         )
 
-        # Map tool to intent for compatibility
-        intent = self._tool_to_intent(tool_name)
+        # Map to legacy intent
+        legacy_intent = self._intent_to_legacy(intent)
 
         # Store assistant response
         await self.chat_repo.add_message(
             session_id=session_id,
             role="assistant",
             content=response_text,
-            intent=intent.value,
+            intent=legacy_intent.value,
             extra_data={"tool": tool_name, "data": tool_result.get("data")},
         )
 
         return ChatResponse(
             message=response_text,
-            intent=intent,
+            intent=legacy_intent,
             session_id=session_id,
             data=tool_result.get("data"),
         )
 
-    async def _decide_tool(
+    async def _load_context(self, session_id: str) -> ConversationContext:
+        """Load conversation context from session."""
+        chat_session = await self.chat_repo.get_session_by_id(session_id)
+        if chat_session and chat_session.context:
+            return ConversationContext.from_dict(chat_session.context)
+        return ConversationContext()
+
+    async def _save_context(self, session_id: str, context: ConversationContext):
+        """Save conversation context to session."""
+        await self.chat_repo.update_session_context(session_id, context.to_dict())
+
+    async def _detect_intent_llm(
         self,
         message: str,
-        context: dict,
+        context: ConversationContext,
         chat_history: str,
-    ) -> dict:
-        """Use LLM to decide which tool to call."""
-        # Format context for the prompt
-        context_str = self._format_context(context)
-        tools_str = get_tools_for_prompt()
+    ) -> tuple[Intent, dict]:
+        """Use LLM for ambiguous intent detection."""
+        context_str = self._format_context_for_llm(context)
 
-        system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
-            tools=tools_str,
+        prompt = AMBIGUOUS_INTENT_PROMPT.format(
             context=context_str,
+            message=message,
         )
-
-        user_prompt = f"Сообщение пользователя: {message}\n\nИстория чата:\n{chat_history}"
 
         try:
             result = await self.llm_client.complete_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.1,  # Low temperature for consistent decisions
+                system_prompt=prompt,
+                user_prompt=f"История: {chat_history}\n\nСообщение: {message}",
+                temperature=0.1,
             )
-            return result
+
+            intent_str = result.get("intent", "ask_question")
+            params = result.get("params", {})
+
+            # Map string to Intent enum
+            intent_map = {
+                "search_product": Intent.SEARCH_PRODUCT,
+                "build_pc": Intent.BUILD_PC,
+                "modify_build": Intent.MODIFY_BUILD,
+                "replace_component": Intent.REPLACE_COMPONENT,
+                "add_peripheral": Intent.ADD_PERIPHERAL,
+                "show_build": Intent.SHOW_BUILD,
+                "ask_question": Intent.ASK_QUESTION,
+                "delivery_info": Intent.DELIVERY_INFO,
+                "call_manager": Intent.CALL_MANAGER,
+                "greeting": Intent.GREETING,
+            }
+            return intent_map.get(intent_str, Intent.ASK_QUESTION), params
+
         except Exception as e:
-            logger.error(f"Tool decision failed: {e}")
-            return {"tool": "general_response", "params": {}}
+            logger.error(f"LLM intent detection failed: {e}")
+            return Intent.ASK_QUESTION, {}
+
+    def _format_context_for_llm(self, context: ConversationContext) -> str:
+        """Format context for LLM prompt."""
+        parts = []
+
+        if context.has_build():
+            total = context.current_build.get("total_price", 0)
+            parts.append(f"Есть сборка ПК на {total:,} тг")
+
+        if context.last_action != LastAction.NONE:
+            action_map = {
+                LastAction.SEARCH: "Последний поиск",
+                LastAction.BUILD_PC: "Показана сборка",
+                LastAction.SHOW_ALTERNATIVES: f"Показаны альтернативы для {context.last_component_type}",
+                LastAction.SHOW_PERIPHERALS: f"Показана периферия ({context.last_peripheral_type})",
+            }
+            parts.append(action_map.get(context.last_action, ""))
+
+        return "; ".join(parts) if parts else "Новая сессия"
+
+    def _intent_to_tool(
+        self,
+        intent: Intent,
+        params: dict,
+        context: ConversationContext,
+    ) -> tuple[str, dict]:
+        """Map intent to tool name and params."""
+
+        if intent == Intent.SEARCH_PRODUCT:
+            return "search_products", {
+                "query": params.get("query", ""),
+                "category": params.get("category"),
+                "min_price": params.get("min_price"),
+                "max_price": params.get("max_price"),
+            }
+
+        elif intent == Intent.BUILD_PC:
+            return "build_pc", {
+                "budget": params.get("budget"),
+                "purpose": params.get("purpose", "gaming"),
+            }
+
+        elif intent == Intent.MODIFY_BUILD:
+            return "modify_build", {
+                "modifier": params.get("modifier", "higher"),
+            }
+
+        elif intent == Intent.REPLACE_COMPONENT:
+            return "get_alternatives", {
+                "component_type": params.get("component_type", "gpu"),
+                "preference": params.get("preference"),
+            }
+
+        elif intent == Intent.SELECT_ITEM:
+            return "select_item", {
+                "number": params.get("number", 1),
+            }
+
+        elif intent == Intent.ADD_PERIPHERAL:
+            return "add_peripheral", {
+                "peripheral_type": params.get("peripheral_type", "mouse"),
+                "budget": params.get("budget"),
+            }
+
+        elif intent == Intent.SHOW_BUILD:
+            return "show_current_build", {}
+
+        elif intent == Intent.DELIVERY_INFO:
+            return "get_delivery_info", {
+                "topic": params.get("topic", "all"),
+            }
+
+        elif intent == Intent.CALL_MANAGER:
+            return "call_manager", {
+                "reason": params.get("reason", "запрос клиента"),
+            }
+
+        elif intent == Intent.GREETING:
+            return "general_response", {}
+
+        else:  # ASK_QUESTION, UNKNOWN
+            return "general_response", {}
+
+    async def _update_context_after_action(
+        self,
+        session_id: str,
+        intent: Intent,
+        tool_result: dict,
+        context: ConversationContext,
+    ):
+        """Update conversation context after tool execution."""
+        data = tool_result.get("data", {})
+
+        if intent == Intent.SEARCH_PRODUCT:
+            context.last_action = LastAction.SEARCH
+            context.last_shown_products = data.get("products", [])
+            context.last_search_query = data.get("query", "")
+            context.state = ConversationState.SEARCHING
+
+        elif intent == Intent.BUILD_PC:
+            context.last_action = LastAction.BUILD_PC
+            context.current_build = data
+            context.original_budget = data.get("total_price", 0)
+            context.state = ConversationState.BUILDING
+
+        elif intent == Intent.MODIFY_BUILD:
+            context.last_action = LastAction.BUILD_PC
+            context.current_build = data
+            context.state = ConversationState.BUILDING
+
+        elif intent == Intent.REPLACE_COMPONENT:
+            context.last_action = LastAction.SHOW_ALTERNATIVES
+            context.last_alternatives = data.get("alternatives", [])
+            context.last_component_type = data.get("component_type", "")
+            context.state = ConversationState.REVIEWING
+
+        elif intent == Intent.SELECT_ITEM:
+            if data.get("action") == "replaced_component":
+                context.current_build = data.get("current_build", context.current_build)
+                context.last_alternatives = []
+                context.last_action = LastAction.BUILD_PC
+            elif data.get("action") == "added_peripheral":
+                context.current_build = data.get("current_build", context.current_build)
+                context.last_peripherals = []
+                context.last_action = LastAction.BUILD_PC
+            context.state = ConversationState.BUILDING
+
+        elif intent == Intent.ADD_PERIPHERAL:
+            context.last_action = LastAction.SHOW_PERIPHERALS
+            context.last_peripherals = data.get("peripherals", [])
+            context.last_peripheral_type = data.get("peripheral_type", "")
+            context.state = ConversationState.REVIEWING
+
+        elif intent == Intent.CALL_MANAGER:
+            context.state = ConversationState.MANAGER
+
+        # Track intent history
+        context.intent_history.append(intent.value)
+
+        # Save context
+        await self._save_context(session_id, context)
 
     async def _format_response(
         self,
+        intent: Intent,
         tool_name: str,
         tool_result: dict,
         user_message: str,
         chat_history: str,
+        context: ConversationContext,
     ) -> str:
-        """Use LLM to format a nice response."""
+        """Format response based on tool result."""
         # Handle errors
         if not tool_result.get("success"):
             error = tool_result.get("error", "Произошла ошибка")
@@ -303,7 +360,7 @@ class Orchestrator:
 
         data = tool_result.get("data", {})
 
-        # CRITICAL: Use deterministic formatting for PC builds to prevent hallucination
+        # Use deterministic formatting for structured data
         if tool_name in ["build_pc", "modify_build"]:
             return self._format_pc_build(data)
 
@@ -328,294 +385,22 @@ class Orchestrator:
         if tool_name == "call_manager":
             return self._format_manager_response(data)
 
-        if tool_name == "clarify_intent":
-            return self._format_clarification(data)
-
         if tool_name == "general_response":
-            # Use LLM for general responses
-            return await self._generate_general_response(user_message, chat_history)
-
-        # Use LLM to format complex responses
-        user_prompt = RESPONSE_FORMAT_PROMPT.format(
-            data=json.dumps(data, ensure_ascii=False, indent=2),
-            user_message=user_message,
-            chat_history=chat_history,
-        )
-
-        try:
-            return await self.llm_client.complete(
-                system_prompt="Ты помощник магазина. Форматируй ответ красиво и понятно.",
-                user_prompt=user_prompt,
-                temperature=0.7,
-            )
-        except Exception as e:
-            logger.error(f"Response formatting failed: {e}")
-            return self._fallback_format(tool_name, data)
-
-    def _format_delivery_info(self, data: dict) -> str:
-        """Format delivery and store info - DETERMINISTIC, topic-aware."""
-        topic = data.get("topic", "all")
-
-        # Handle specific topics
-        if topic == "phone":
-            lines = ["**Телефоны Over-Shop.kz**\n"]
-            lines.append(f"📞 Интернет-магазин: {data.get('online_phone', '')}")
-            lines.append(f"📱 Kaspi заказы: {data.get('kaspi_orders', '')}")
-            lines.append("")
-            for key, store in data.get("stores", {}).items():
-                lines.append(f"📍 {store.get('name', '')}: {', '.join(store.get('phones', []))}")
-            return "\n".join(lines)
-
-        if topic == "hours":
-            lines = ["**Режим работы магазинов**\n"]
-            for key, store in data.get("stores", {}).items():
-                lines.append(f"📍 **{store.get('name', '')}**")
-                lines.append(f"   🕐 {store.get('hours', '')}")
-                lines.append("")
-            return "\n".join(lines)
-
-        if topic == "address":
-            lines = ["**Адреса магазинов**\n"]
-            for key, store in data.get("stores", {}).items():
-                lines.append(f"📍 **{store.get('name', '')}**")
-                lines.append(f"   {store.get('address', '')}")
-                lines.append("")
-            return "\n".join(lines)
-
-        if topic == "delivery":
-            delivery = data.get("delivery", {})
-            lines = ["**Доставка**\n"]
-            lines.append(f"• {delivery.get('pickup', '')}")
-            lines.append(f"• {delivery.get('courier', '')}")
-            lines.append(f"• {delivery.get('express', '')}")
-            lines.append(f"• Транспортные компании: {delivery.get('transport', '')}")
-            return "\n".join(lines)
-
-        if topic == "payment":
-            payment = data.get("payment", {})
-            lines = ["**Способы оплаты**\n"]
-            for method in payment.get("methods", []):
-                lines.append(f"• {method}")
-            return "\n".join(lines)
-
-        if topic == "city":
-            store = data.get("store", {})
-            city_name = store.get("name", "")
-            lines = [f"**Магазин в {city_name}**\n"]
-            lines.append(f"📍 {store.get('address', '')}")
-            lines.append(f"🕐 {store.get('hours', '')}")
-            lines.append(f"📞 {', '.join(store.get('phones', []))}")
-            if store.get("service_center"):
-                lines.append(f"🔧 Сервис: {store.get('service_center')}")
-            return "\n".join(lines)
-
-        # Full info (topic == "all")
-        stores = data.get("stores", {})
-        online = data.get("online", {})
-        delivery = data.get("delivery", {})
-        payment = data.get("payment", {})
-
-        lines = ["**Магазины Over-Shop.kz**\n"]
-
-        # Almaty
-        if "almaty" in stores:
-            s = stores["almaty"]
-            lines.append("📍 **Алматы**")
-            lines.append(f"   {s.get('address', '')}")
-            lines.append(f"   🕐 {s.get('hours', '')}")
-            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
-            lines.append("")
-
-        # Astana
-        if "astana" in stores:
-            s = stores["astana"]
-            lines.append("📍 **Астана**")
-            lines.append(f"   {s.get('address', '')}")
-            lines.append(f"   🕐 {s.get('hours', '')}")
-            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
-            lines.append("")
-
-        # Pavlodar
-        if "pavlodar" in stores:
-            s = stores["pavlodar"]
-            lines.append("📍 **Павлодар**")
-            lines.append(f"   {s.get('address', '')}")
-            lines.append(f"   🕐 {s.get('hours', '')}")
-            lines.append(f"   📞 {', '.join(s.get('phones', []))}")
-            if s.get("service_center"):
-                lines.append(f"   🔧 Сервис: {s.get('service_center')}")
-            lines.append("")
-
-        # Online contacts
-        lines.append("**Интернет-магазин**")
-        lines.append(f"📞 {online.get('phone', '')}")
-        lines.append(f"📱 Kaspi заказы: {online.get('kaspi_orders', '')}")
-        lines.append(f"✉️ {online.get('email', '')}")
-        lines.append(f"📷 Instagram: {online.get('instagram', '')}")
-        lines.append("")
-
-        # Delivery
-        lines.append("**Доставка**")
-        lines.append(f"• {delivery.get('pickup', '')}")
-        lines.append(f"• {delivery.get('courier', '')}")
-        lines.append(f"• {delivery.get('express', '')}")
-        lines.append(f"• Транспортные компании: {delivery.get('transport', '')}")
-        lines.append("")
-
-        # Payment
-        lines.append("**Оплата**")
-        for method in payment.get("methods", []):
-            lines.append(f"• {method}")
-
-        return "\n".join(lines)
-
-    def _format_manager_response(self, data: dict) -> str:
-        """Format manager escalation response."""
-        status = data.get("status")
-        reason = data.get("reason", "")
-
-        if status == "escalated":
-            return (
-                "🔔 **Диалог передан менеджеру**\n\n"
-                "Менеджер ответит вам в ближайшее время.\n"
-                "Все ваши сообщения будут сохранены.\n\n"
-                "📞 Срочный вопрос: +7 771 013-00-20\n"
-                "🕐 Время работы: Пн-Пт 9:00-19:00"
-            )
-        return "Чем могу помочь?"
-
-    async def _generate_general_response(self, message: str, chat_history: str) -> str:
-        """Generate general conversational response."""
-        # Check if this is a greeting (first message or greeting words)
-        greeting_words = ["привет", "здравствуй", "добрый", "салем", "хай", "hello", "hi"]
-        is_greeting = not chat_history or any(word in message.lower() for word in greeting_words)
-
-        if is_greeting:
-            return (
-                "Привет! Я Роберт, консультант Over-Shop.kz.\n\n"
-                "Помогу собрать ПК, найти комплектующие или ответить на вопросы о магазине.\n"
-                "Что вас интересует?"
-            )
-
-        system_prompt = """Ты Роберт — AI-консультант магазина компьютерной техники Over-Shop.kz.
-
-## ФОРМАТ ОТВЕТА (строго):
-1. Короткое вступление (1 строка)
-2. Чёткий ответ по сути
-3. 1 предложение «почему» (объяснение)
-
-## ТВОИ ТЕМЫ (только эти):
-- Сборка ПК и подбор комплектующих
-- Поиск товаров из каталога магазина
-- Вопросы о магазине: доставка, оплата, гарантия, адреса
-
-## ЗАПРЕЩЁННЫЕ ТЕМЫ:
-Если спрашивают НЕ про магазин/ПК/товары — вежливо верни к теме:
-«Я консультант по компьютерной технике. Могу помочь с подбором ПК или поиском товаров.»
-
-## СТИЛЬ:
-- Уверенный, но дружелюбный
-- Кратко, без воды
-- ВСЕГДА объясняй «почему» — клиенту важно понимать логику
-- Говори «рекомендую», «советую» — не «можно попробовать»
-
-## ЗАПРЕЩЕНО:
-- Лекции и длинные объяснения
-- «Я не могу», «к сожалению», извинения
-- Абстрактные советы без конкретики
-- Выдумывать цены или характеристики
-
-## РАЗРЕШЕНО:
-- Уверенные рекомендации
-- Короткие объяснения выбора
-- Предложение альтернатив
-- Вопросы для уточнения потребностей"""
-
-        user_prompt = f"История чата:\n{chat_history}\n\nСообщение клиента: {message}"
-
-        try:
-            return await self.llm_client.complete(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.7,
-            )
-        except Exception:
-            return "Чем могу помочь? Подберу комплектующие или найду нужный товар."
-
-    def _fallback_format(self, tool_name: str, data: dict) -> str:
-        """Fallback formatting without LLM."""
-        if "products" in data:
-            products = data["products"]
-            if not products:
-                return "Товары не найдены. Попробуйте изменить запрос."
-            lines = ["Найденные товары:\n"]
-            for i, p in enumerate(products[:5], 1):
-                name = p.get("name", "")[:60]
-                price = p.get("price", 0)
-                discount = p.get("discount_price", 0)
-                lines.append(f"{i}. {name}")
-                lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
-            return "\n".join(lines)
-
-        if "build" in data or "current_build" in data:
-            build = data.get("build") or data.get("current_build", {}).get("build", {})
-            if not build:
-                return "Сборка не найдена."
-            lines = ["Ваша сборка:\n"]
-            total = 0
-            total_installment = 0
-            for comp_type, comp in build.items():
-                if comp:
-                    name = comp.get("name", "")[:50]
-                    price = comp.get("price", 0)
-                    discount = comp.get("discount_price", 0)
-                    total += discount or price
-                    total_installment += price
-                    lines.append(f"• {comp_type.upper()}: {name}")
-                    lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
-            lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
-            lines.append(f"**Итого в рассрочку: {total_installment:,.0f} ₸**")
-            return "\n".join(lines)
-
-        if "alternatives" in data:
-            alts = data["alternatives"]
-            if not alts:
-                return "Альтернативы не найдены."
-            lines = [f"Альтернативы для {data.get('component_type', 'компонента')}:\n"]
-            for i, p in enumerate(alts[:5], 1):
-                name = p.get("name", "")[:60]
-                price = p.get("price", 0)
-                discount = p.get("discount_price", 0)
-                lines.append(f"{i}. {name}")
-                lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
-            return "\n".join(lines)
-
-        if "peripherals" in data:
-            perips = data["peripherals"]
-            if not perips:
-                return "Периферия не найдена."
-            lines = ["Периферия:\n"]
-            for i, p in enumerate(perips[:5], 1):
-                name = p.get("name", "")[:60]
-                price = p.get("price", 0)
-                discount = p.get("discount_price", 0)
-                lines.append(f"{i}. {name}")
-                lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
-            return "\n".join(lines)
+            return await self._generate_general_response(user_message, chat_history, context)
 
         return "Готово! Чем ещё могу помочь?"
 
     def _format_pc_build(self, data: dict) -> str:
-        """Format PC build response - DETERMINISTIC, no LLM."""
+        """Format PC build response - DETERMINISTIC."""
         build = data.get("build", {})
         if not build:
-            return "Не удалось собрать ПК. Попробуйте изменить бюджет."
+            # Try to suggest next steps instead of just failing
+            return "Не удалось собрать ПК в указанном бюджете. Попробуйте увеличить бюджет или уточните требования."
 
         lines = ["**Ваша сборка ПК:**\n"]
         total = 0
         total_installment = 0
 
-        # Component display order and names
         component_names = {
             "cpu": "Процессор",
             "motherboard": "Материнская плата",
@@ -636,10 +421,10 @@ class Orchestrator:
                 total += discount or price
                 total_installment += price
                 display_name = component_names.get(comp_type, comp_type.upper())
-                lines.append(f"• **{display_name}**: {name}")
-                lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+                lines.append(f"**{display_name}**: {name}")
+                lines.append(f"Рассрочка: {price:,.0f} | Картой: {discount:,.0f}\n")
 
-        # Add peripherals if present
+        # Peripherals
         peripherals = data.get("peripherals", {})
         if peripherals:
             peripheral_names = {
@@ -647,51 +432,48 @@ class Orchestrator:
                 "mouse": "Мышь",
                 "keyboard": "Клавиатура",
                 "headset": "Гарнитура",
-                "mousepad": "Коврик",
-                "webcam": "Веб-камера",
             }
             lines.append("\n**Периферия:**")
             for ptype, p in peripherals.items():
                 if p:
-                    display_name = peripheral_names.get(ptype, ptype.capitalize())
                     name = p.get("name", "")[:50]
                     price = p.get("price", 0)
                     discount = p.get("discount_price", 0)
                     total += discount or price
                     total_installment += price
-                    lines.append(f"• **{display_name}**: {name}")
-                    lines.append(f"  Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
+                    lines.append(f"**{peripheral_names.get(ptype, ptype)}**: {name}")
+                    lines.append(f"Рассрочка: {price:,.0f} | Картой: {discount:,.0f}")
 
-        lines.append(f"\n**Итого картой: {total:,.0f} ₸**")
-        lines.append(f"**Итого в рассрочку: {total_installment:,.0f} ₸**")
+        lines.append(f"\n**Итого картой: {total:,.0f}**")
+        lines.append(f"**Итого в рассрочку: {total_installment:,.0f}**")
 
-        # Show warnings
+        # Show warnings as info, not errors
         warnings = data.get("warnings", [])
         if warnings:
-            lines.append("\n⚠️ **Предупреждения:**")
+            lines.append("\nПримечания:")
             for w in warnings:
-                lines.append(f"• {w}")
+                lines.append(f"- {w}")
 
-        # Show compatibility notes
+        # Compatibility notes
         compat_notes = data.get("compatibility_notes", [])
         if compat_notes:
-            lines.append("\n❌ **Проблемы совместимости:**")
+            lines.append("\n**Важно:**")
             for note in compat_notes:
-                lines.append(f"• {note}")
+                lines.append(f"- {note}")
 
         return "\n".join(lines)
 
     def _format_alternatives(self, data: dict) -> str:
-        """Format component alternatives - DETERMINISTIC."""
+        """Format alternatives response."""
         alts = data.get("alternatives", [])
-        comp_type = data.get("component_type", "компонента")
+        comp_type = data.get("component_type", "")
         warning = data.get("warning")
 
         component_names = {
             "cpu": "процессора",
+            "gpu": "видеокарты",
             "motherboard": "материнской платы",
             "ram": "оперативной памяти",
-            "gpu": "видеокарты",
             "storage": "накопителя",
             "psu": "блока питания",
             "case": "корпуса",
@@ -699,15 +481,12 @@ class Orchestrator:
         }
         display_name = component_names.get(comp_type, comp_type)
 
-        # Show warning first if present (e.g., platform change warning)
         lines = []
         if warning:
             lines.append(warning)
             lines.append("")
 
         if not alts:
-            if warning:
-                return "\n".join(lines)
             return f"Альтернативы для {display_name} не найдены."
 
         lines.append(f"**Альтернативы для {display_name}:**\n")
@@ -716,41 +495,29 @@ class Orchestrator:
             price = p.get("price", 0)
             discount = p.get("discount_price", 0)
             lines.append(f"{i}. {name}")
-            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+            lines.append(f"   Рассрочка: {price:,.0f} | Картой: {discount:,.0f}\n")
 
         lines.append("Выберите номер для замены.")
         return "\n".join(lines)
 
     def _format_selection(self, data: dict) -> str:
-        """Format item selection response - DETERMINISTIC."""
+        """Format selection response."""
         action = data.get("action", "")
+        current_build = data.get("current_build")
+
+        if action in ["replaced_component", "added_peripheral"] and current_build:
+            return self._format_pc_build(current_build)
+
         selected = data.get("selected", {})
-
-        if action == "replaced_component":
-            # Show the updated build
-            current_build = data.get("current_build", {})
-            if current_build:
-                return self._format_pc_build(current_build)
-            name = selected.get("name", "")
-            return f"✅ Компонент заменён: {name}"
-
-        if action == "added_peripheral":
-            current_build = data.get("current_build", {})
-            if current_build:
-                return self._format_pc_build(current_build)
-            name = selected.get("name", "")
-            return f"✅ Добавлено: {name}"
-
-        # General selection
         name = selected.get("name", "товар")
         price = selected.get("price", 0)
         discount = selected.get("discount_price", 0)
-        return f"✅ Выбран: {name}\nРассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸"
+        return f"Выбран: {name}\nРассрочка: {price:,.0f} | Картой: {discount:,.0f}"
 
     def _format_peripherals(self, data: dict) -> str:
-        """Format peripherals list - DETERMINISTIC."""
+        """Format peripherals response."""
         perips = data.get("peripherals", [])
-        ptype = data.get("peripheral_type", "периферия")
+        ptype = data.get("peripheral_type", "")
 
         peripheral_names = {
             "mouse": "Мыши",
@@ -771,13 +538,13 @@ class Orchestrator:
             price = p.get("price", 0)
             discount = p.get("discount_price", 0)
             lines.append(f"{i}. {name}")
-            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸\n")
+            lines.append(f"   Рассрочка: {price:,.0f} | Картой: {discount:,.0f}\n")
 
         lines.append("Выберите номер для добавления к сборке.")
         return "\n".join(lines)
 
     def _format_search_results(self, data: dict) -> str:
-        """Format search results - DETERMINISTIC."""
+        """Format search results."""
         products = data.get("products", [])
         query = data.get("query", "")
 
@@ -791,7 +558,7 @@ class Orchestrator:
             discount = p.get("discount_price", 0)
             stock = p.get("stock", 0)
             lines.append(f"{i}. {name}")
-            lines.append(f"   Рассрочка: {price:,.0f} ₸ | Картой: {discount:,.0f} ₸")
+            lines.append(f"   Рассрочка: {price:,.0f} | Картой: {discount:,.0f}")
             if stock > 0:
                 lines.append(f"   В наличии: {stock} шт.\n")
             else:
@@ -799,61 +566,138 @@ class Orchestrator:
 
         return "\n".join(lines)
 
-    def _format_clarification(self, data: dict) -> str:
-        """Format clarification question - DETERMINISTIC."""
-        question = data.get("question", "Уточните ваш запрос")
-        options = data.get("options", [])
+    def _format_delivery_info(self, data: dict) -> str:
+        """Format delivery/store info."""
+        topic = data.get("topic", "all")
 
-        lines = [question, ""]
-        for opt in options:
-            text = opt.get("text", "")
-            lines.append(f"• {text}")
+        if topic == "phone":
+            lines = ["**Телефоны Over-Shop.kz**\n"]
+            lines.append(f"Интернет-магазин: {data.get('online_phone', '')}")
+            lines.append(f"Kaspi заказы: {data.get('kaspi_orders', '')}")
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"\n{store.get('name', '')}: {', '.join(store.get('phones', []))}")
+            return "\n".join(lines)
+
+        if topic == "hours":
+            lines = ["**Режим работы магазинов**\n"]
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"**{store.get('name', '')}**")
+                lines.append(f"{store.get('hours', '')}\n")
+            return "\n".join(lines)
+
+        if topic == "address":
+            lines = ["**Адреса магазинов**\n"]
+            for key, store in data.get("stores", {}).items():
+                lines.append(f"**{store.get('name', '')}**")
+                lines.append(f"{store.get('address', '')}\n")
+            return "\n".join(lines)
+
+        if topic == "delivery":
+            delivery = data.get("delivery", {})
+            lines = ["**Доставка**\n"]
+            lines.append(f"- {delivery.get('pickup', '')}")
+            lines.append(f"- {delivery.get('courier', '')}")
+            lines.append(f"- Транспортные компании: {delivery.get('transport', '')}")
+            return "\n".join(lines)
+
+        if topic == "payment":
+            payment = data.get("payment", {})
+            lines = ["**Способы оплаты**\n"]
+            for method in payment.get("methods", []):
+                lines.append(f"- {method}")
+            return "\n".join(lines)
+
+        # Full info
+        return self._format_full_delivery_info(data)
+
+    def _format_full_delivery_info(self, data: dict) -> str:
+        """Format complete delivery info."""
+        stores = data.get("stores", {})
+        online = data.get("online", {})
+        delivery = data.get("delivery", {})
+        payment = data.get("payment", {})
+
+        lines = ["**Магазины Over-Shop.kz**\n"]
+
+        for city_key in ["almaty", "astana", "pavlodar"]:
+            if city_key in stores:
+                s = stores[city_key]
+                city_names = {"almaty": "Алматы", "astana": "Астана", "pavlodar": "Павлодар"}
+                lines.append(f"**{city_names.get(city_key, city_key)}**")
+                lines.append(f"{s.get('address', '')}")
+                lines.append(f"{s.get('hours', '')}")
+                lines.append(f"Тел: {', '.join(s.get('phones', []))}\n")
+
+        lines.append("**Интернет-магазин**")
+        lines.append(f"Тел: {online.get('phone', '')}")
+        lines.append(f"Kaspi: {online.get('kaspi_orders', '')}")
+        lines.append(f"Email: {online.get('email', '')}\n")
+
+        lines.append("**Доставка**")
+        lines.append(f"- {delivery.get('pickup', '')}")
+        lines.append(f"- {delivery.get('courier', '')}")
+        lines.append(f"- ТК: {delivery.get('transport', '')}\n")
+
+        lines.append("**Оплата**")
+        for method in payment.get("methods", []):
+            lines.append(f"- {method}")
 
         return "\n".join(lines)
 
-    def _format_context(self, context: dict) -> str:
-        """Format context for the prompt."""
-        if not context:
-            return "Контекст пуст (новая сессия)"
+    def _format_manager_response(self, data: dict) -> str:
+        """Format manager escalation response."""
+        return (
+            "**Диалог передан менеджеру**\n\n"
+            "Менеджер ответит вам в ближайшее время.\n"
+            "Все ваши сообщения будут сохранены.\n\n"
+            "Срочный вопрос: +7 771 013-00-20\n"
+            "Время работы: Пн-Пт 9:00-19:00"
+        )
 
-        lines = []
-        if context.get("current_build"):
-            build = context["current_build"]
-            total = build.get("total_price", 0)
-            original_budget = context.get("original_budget", total)
-            components = list(build.get("build", {}).keys())
-            lines.append(f"- Есть сборка ПК на сумму {total:,.0f} ₸ (запрошенный бюджет был {original_budget:,.0f} ₸)")
-            lines.append(f"  Компоненты: {', '.join(components)}")
+    async def _generate_general_response(
+        self,
+        message: str,
+        chat_history: str,
+        context: ConversationContext,
+    ) -> str:
+        """Generate conversational response."""
+        # Check for greeting
+        greeting_words = ["привет", "здравствуй", "добрый", "салем", "хай", "hello", "hi"]
+        msg_lower = message.lower()
 
-        if context.get("last_search_results"):
-            count = len(context["last_search_results"])
-            lines.append(f"- Последний поиск: {count} товаров")
+        if not chat_history or any(word in msg_lower for word in greeting_words):
+            return (
+                "Привет! Я консультант Over-Shop.kz.\n\n"
+                "Помогу собрать ПК, найти комплектующие или ответить на вопросы о магазине.\n"
+                "Что вас интересует?"
+            )
 
-        if context.get("last_alternatives"):
-            alts = context["last_alternatives"]
-            count = len(alts)
-            comp = context.get("last_component_type", "")
-            # Extract brand names from alternatives
-            brands = set()
-            for alt in alts[:5]:
-                name = alt.get("name", "").lower()
-                for brand in ["afox", "colorful", "msi", "asus", "gigabyte", "palit", "zotac", "sapphire", "evga"]:
-                    if brand in name:
-                        brands.add(brand.upper())
-                        break
-            brands_str = ", ".join(sorted(brands)) if brands else "разные"
-            lines.append(f"- Показаны альтернативы для {comp}: {count} вариантов (бренды: {brands_str})")
-            lines.append(f"  Если пользователь недоволен - вызови get_alternatives с новым preference!")
+        # Use LLM for other general responses
+        system_prompt = """Ты консультант магазина компьютерной техники Over-Shop.kz.
 
-        if context.get("last_peripherals"):
-            count = len(context["last_peripherals"])
-            ptype = context.get("last_peripheral_type", "")
-            lines.append(f"- Показана периферия ({ptype}): {count} вариантов")
+Твои темы:
+- Сборка ПК и подбор комплектующих
+- Поиск товаров из каталога
+- Доставка, оплата, гарантия, адреса магазинов
 
-        if context.get("awaiting_manager_confirmation"):
-            lines.append("- Ожидается подтверждение вызова менеджера")
+Стиль ответа:
+- Краткий, по делу
+- Уверенный, но дружелюбный
+- Если вопрос не по теме - вежливо верни к компьютерной технике
 
-        return "\n".join(lines) if lines else "Контекст пуст"
+Запрещено:
+- Лекции и длинные объяснения
+- "Я не могу", извинения
+- Выдумывать цены или характеристики"""
+
+        try:
+            return await self.llm_client.complete(
+                system_prompt=system_prompt,
+                user_prompt=f"История: {chat_history}\n\nСообщение: {message}",
+                temperature=0.7,
+            )
+        except Exception:
+            return "Чем могу помочь? Подберу комплектующие или найду нужный товар."
 
     async def _get_chat_history(self, session_id: str, limit: int = 10) -> str:
         """Get formatted chat history."""
@@ -868,28 +712,20 @@ class Orchestrator:
             lines.append(f"{role}: {content}")
         return "\n".join(lines)
 
-    async def _get_context(self, session_id: str) -> dict:
-        """Get session context."""
-        chat_session = await self.chat_repo.get_session_by_id(session_id)
-        if chat_session and chat_session.context:
-            return chat_session.context
-        return {}
-
-    def _tool_to_intent(self, tool_name: str) -> Intent:
-        """Map tool name to Intent enum for compatibility."""
+    def _intent_to_legacy(self, intent: Intent) -> LegacyIntent:
+        """Map new Intent to legacy Intent enum."""
         mapping = {
-            "search_products": Intent.PRODUCT_SEARCH,
-            "build_pc": Intent.PC_BUILD,
-            "modify_build": Intent.PC_BUILD,
-            "get_alternatives": Intent.COMPONENT_REPLACE,
-            "select_item": Intent.SELECT_ALTERNATIVE,
-            "add_peripheral": Intent.ADD_PERIPHERAL,
-            "show_current_build": Intent.SHOW_BUILD,
-            "show_specs": Intent.SHOW_SPECS,
-            "get_delivery_info": Intent.DELIVERY_INFO,
-            "call_manager": Intent.CALL_MANAGER,
-            "answer_faq": Intent.FAQ,
-            "clarify_intent": Intent.GENERAL,  # Use general for clarifications
-            "general_response": Intent.GENERAL,
+            Intent.SEARCH_PRODUCT: LegacyIntent.PRODUCT_SEARCH,
+            Intent.BUILD_PC: LegacyIntent.PC_BUILD,
+            Intent.MODIFY_BUILD: LegacyIntent.PC_BUILD,
+            Intent.REPLACE_COMPONENT: LegacyIntent.COMPONENT_REPLACE,
+            Intent.SELECT_ITEM: LegacyIntent.SELECT_ALTERNATIVE,
+            Intent.ADD_PERIPHERAL: LegacyIntent.ADD_PERIPHERAL,
+            Intent.SHOW_BUILD: LegacyIntent.SHOW_BUILD,
+            Intent.DELIVERY_INFO: LegacyIntent.DELIVERY_INFO,
+            Intent.CALL_MANAGER: LegacyIntent.CALL_MANAGER,
+            Intent.ASK_QUESTION: LegacyIntent.GENERAL,
+            Intent.GREETING: LegacyIntent.GENERAL,
+            Intent.UNKNOWN: LegacyIntent.GENERAL,
         }
-        return mapping.get(tool_name, Intent.GENERAL)
+        return mapping.get(intent, LegacyIntent.GENERAL)

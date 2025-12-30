@@ -1,10 +1,17 @@
-"""Tool executor - executes tools called by the orchestrator."""
+"""Tool executor - standardized tool responses.
+
+Response format:
+{
+    "success": bool,
+    "data": dict,  # Tool-specific data
+    "metadata": dict  # Optional metadata
+}
+"""
 
 import logging
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.repositories import ChatRepository, ProductRepository
 from app.schemas.common import ProductSchema
@@ -14,37 +21,14 @@ from app.services.product_search import ProductSearchService
 
 logger = logging.getLogger(__name__)
 
-# Mapping from Russian peripheral names to English keys
+# Peripheral name mapping
 PERIPHERAL_NAME_MAPPING = {
-    # Monitor
-    "монитор": "monitor",
-    "дисплей": "monitor",
-    "экран": "monitor",
-    "monitor": "monitor",
-    # Mouse
-    "мышь": "mouse",
-    "мышка": "mouse",
-    "мышку": "mouse",
-    "mouse": "mouse",
-    # Keyboard
-    "клавиатура": "keyboard",
-    "клавиатуру": "keyboard",
-    "клава": "keyboard",
-    "keyboard": "keyboard",
-    # Headset
-    "наушники": "headset",
-    "гарнитура": "headset",
-    "гарнитуру": "headset",
-    "headset": "headset",
-    # Mousepad
-    "коврик": "mousepad",
-    "коврик для мыши": "mousepad",
-    "mousepad": "mousepad",
-    # Webcam
-    "веб-камера": "webcam",
-    "вебкамера": "webcam",
-    "камера": "webcam",
-    "webcam": "webcam",
+    "монитор": "monitor", "дисплей": "monitor", "экран": "monitor",
+    "мышь": "mouse", "мышка": "mouse", "мышку": "mouse",
+    "клавиатура": "keyboard", "клавиатуру": "keyboard", "клава": "keyboard",
+    "наушники": "headset", "гарнитура": "headset", "гарнитуру": "headset",
+    "коврик": "mousepad", "коврик для мыши": "mousepad",
+    "веб-камера": "webcam", "вебкамера": "webcam", "камера": "webcam",
 }
 
 
@@ -57,7 +41,7 @@ def normalize_peripheral_type(peripheral_type: str) -> str:
 
 
 class ToolExecutor:
-    """Executes backend tools and returns structured results."""
+    """Executes backend tools with standardized responses."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -70,21 +54,26 @@ class ToolExecutor:
         params: dict,
         session_id: str,
     ) -> dict[str, Any]:
-        """Execute a tool and return the result.
+        """Execute tool and return standardized result.
 
         Returns:
-            dict with 'success', 'data', and optionally 'error' keys
+            {"success": bool, "data": dict, "metadata": dict}
         """
         try:
             method = getattr(self, f"_tool_{tool_name}", None)
             if not method:
-                return {"success": False, "error": f"Unknown tool: {tool_name}"}
+                return {
+                    "success": False,
+                    "error": f"Unknown tool: {tool_name}",
+                    "data": {}
+                }
 
             result = await method(params, session_id)
-            return {"success": True, "data": result}
+            return {"success": True, "data": result, "metadata": {"tool": tool_name}}
+
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "data": {}}
 
     async def _get_context(self, session_id: str) -> dict:
         """Get session context."""
@@ -97,7 +86,7 @@ class ToolExecutor:
         """Update session context."""
         await self.chat_repo.update_session_context(session_id, updates)
 
-    # ===== Tool implementations =====
+    # ===== Product Search =====
 
     async def _tool_search_products(self, params: dict, session_id: str) -> dict:
         """Search for products."""
@@ -106,7 +95,7 @@ class ToolExecutor:
         query = params.get("query", "").strip()
         query_lower = query.lower()
 
-        # 1. Try exact SKU/code search first
+        # Try exact SKU/code search first
         sku_product = await self.product_repo.get_by_sku(query)
         if sku_product:
             products_data = [ProductSchema.model_validate(sku_product).model_dump()]
@@ -114,11 +103,7 @@ class ToolExecutor:
                 "last_search_results": products_data,
                 "last_search_query": query,
             })
-            return {
-                "products": products_data,
-                "total": 1,
-                "query": query,
-            }
+            return {"products": products_data, "total": 1, "query": query}
 
         # Try kaspi_code search
         kaspi_product = await self.product_repo.get_by_kaspi_code(query)
@@ -128,21 +113,11 @@ class ToolExecutor:
                 "last_search_results": products_data,
                 "last_search_query": query,
             })
-            return {
-                "products": products_data,
-                "total": 1,
-                "query": query,
-            }
+            return {"products": products_data, "total": 1, "query": query}
 
-        # 2. Auto-detect manufacturer from query keywords
-        manufacturer = params.get("manufacturer")
-        if not manufacturer:
-            manufacturer = self._detect_manufacturer(query_lower)
-
-        # 3. Auto-detect category from query keywords
-        category = params.get("category")
-        if not category:
-            category = self._detect_category(query_lower)
+        # Auto-detect filters
+        manufacturer = params.get("manufacturer") or self._detect_manufacturer(query_lower)
+        category = params.get("category") or self._detect_category(query_lower)
 
         search_params = ProductSearchParams(
             query=query,
@@ -159,64 +134,61 @@ class ToolExecutor:
 
         products_data = [p.model_dump() for p in result.products]
 
-        # Save to context for selection
         await self._update_context(session_id, {
             "last_search_results": products_data,
             "last_search_query": query,
         })
 
-        return {
-            "products": products_data,
-            "total": result.total_count,
-            "query": query,
-        }
+        return {"products": products_data, "total": result.total_count, "query": query}
 
-    def _detect_manufacturer(self, query: str) -> str | None:
-        """Detect manufacturer from query keywords."""
-        nvidia_keywords = ["nvidia", "geforce", "rtx", "gtx", "quadro", "нвидиа"]
-        amd_keywords = ["amd", "radeon", "ryzen", "rx ", "rx5", "rx6", "rx7", "athlon", "epyc"]
-        intel_keywords = ["intel", "core i", "xeon", "celeron", "pentium", "arc "]
+    def _detect_manufacturer(self, query: str) -> Optional[str]:
+        """Detect manufacturer from query."""
+        nvidia_kw = ["nvidia", "geforce", "rtx", "gtx", "quadro"]
+        amd_kw = ["amd", "radeon", "ryzen", "rx ", "rx5", "rx6", "rx7", "athlon"]
+        intel_kw = ["intel", "core i", "xeon", "celeron", "pentium", "arc "]
 
-        for kw in nvidia_keywords:
+        for kw in nvidia_kw:
             if kw in query:
                 return "NVIDIA"
-        for kw in amd_keywords:
+        for kw in amd_kw:
             if kw in query:
                 return "AMD"
-        for kw in intel_keywords:
+        for kw in intel_kw:
             if kw in query:
                 return "Intel"
         return None
 
-    def _detect_category(self, query: str) -> str | None:
-        """Detect category from query keywords."""
-        # Check if query mentions GPU model names (RTX, RX, GT, etc.)
-        gpu_model_keywords = ["rtx", "gtx", "rx ", "rx5", "rx6", "rx7", "radeon", "geforce", "gt 7", "gt7"]
-        for kw in gpu_model_keywords:
+    def _detect_category(self, query: str) -> Optional[str]:
+        """Detect category from query."""
+        # GPU model names first
+        gpu_kw = ["rtx", "gtx", "rx ", "rx5", "rx6", "rx7", "radeon", "geforce", "gt 7"]
+        for kw in gpu_kw:
             if kw in query:
                 return "Видеокарты"
 
-        category_keywords = {
-            "Видеокарты": ["видеокарт", "gpu", "graphics", "карта для игр", "gaming card"],
+        category_map = {
+            "Видеокарты": ["видеокарт", "gpu", "graphics"],
             "Процессоры": ["процессор", "cpu", "проц", "ryzen", "core i"],
-            "Материнские платы": ["материнск", "motherboard", "мат плат", "матплат"],
+            "Материнские платы": ["материнск", "motherboard", "мат плат"],
             "Оперативная память": ["оперативн", "ram", "память ddr", "ddr4", "ddr5"],
             "SSD накопители": ["ssd", "ссд", "твердотельн"],
             "Жесткие диски": ["hdd", "жестк", "hard drive"],
             "Блоки питания": ["блок питан", "psu", "бп "],
             "Корпуса": ["корпус", "case", "кейс"],
-            "Кулеры и охлаждение": ["кулер", "охлажден", "cooler", "радиатор"],
+            "Кулеры и охлаждение": ["кулер", "охлажден", "cooler"],
             "Мониторы": ["монитор", "дисплей", "экран"],
             "Мыши": ["мышь", "мышка", "mouse"],
             "Клавиатуры": ["клавиатур", "keyboard"],
             "Ноутбуки": ["ноутбук", "laptop", "лэптоп"],
         }
 
-        for category, keywords in category_keywords.items():
+        for category, keywords in category_map.items():
             for kw in keywords:
                 if kw in query:
                     return category
         return None
+
+    # ===== PC Build =====
 
     async def _tool_build_pc(self, params: dict, session_id: str) -> dict:
         """Build a PC configuration."""
@@ -227,29 +199,25 @@ class ToolExecutor:
 
         # Default budgets
         if not budget:
-            budgets = {"gaming": 500000, "office": 200000, "work": 700000}
-            budget = budgets.get(purpose, 450000)
+            defaults = {"gaming": 500000, "office": 200000, "work": 700000}
+            budget = defaults.get(purpose, 450000)
 
-        build_params = PCBuildParams(
-            budget=budget,
-            purpose=purpose,
-        )
+        build_params = PCBuildParams(budget=budget, purpose=purpose)
 
         build_service = PCBuildService(self.session, LLMService())
         result = await build_service.recommend_build(build_params)
 
         build_data = result.model_dump()
 
-        # Save to context with original budget for future reference
         await self._update_context(session_id, {
             "current_build": build_data,
-            "original_budget": budget,  # Save so LLM can reference it
+            "original_budget": budget,
         })
 
         return build_data
 
     async def _tool_modify_build(self, params: dict, session_id: str) -> dict:
-        """Modify current build budget (higher/lower)."""
+        """Modify current build budget."""
         from app.llm.service import LLMService
 
         modifier = params.get("modifier", "higher")
@@ -267,11 +235,7 @@ class ToolExecutor:
         else:
             new_budget = int(prev_price * 0.6)
 
-        # Rebuild with new budget
-        build_params = PCBuildParams(
-            budget=new_budget,
-            purpose="gaming",
-        )
+        build_params = PCBuildParams(budget=new_budget, purpose="gaming")
 
         build_service = PCBuildService(self.session, LLMService())
         result = await build_service.recommend_build(build_params)
@@ -281,13 +245,14 @@ class ToolExecutor:
 
         return build_data
 
+    # ===== Component Alternatives =====
+
     async def _tool_get_alternatives(self, params: dict, session_id: str) -> dict:
         """Get alternative components."""
         from app.llm.service import LLMService
         from app.services.pc_build import normalize_component_type
 
         component_type_raw = params.get("component_type", "gpu")
-        # Normalize Russian name to English key (e.g., "процессор" -> "cpu")
         component_type = normalize_component_type(component_type_raw)
         preference = params.get("preference")
 
@@ -298,7 +263,7 @@ class ToolExecutor:
             return {"error": "Сначала нужно собрать ПК"}
 
         build_service = PCBuildService(self.session, LLMService())
-        alternatives, warning_message = await build_service.get_component_alternatives(
+        alternatives, warning = await build_service.get_component_alternatives(
             component_type=component_type,
             current_build=current_build.get("build", {}),
             preference=preference,
@@ -307,10 +272,9 @@ class ToolExecutor:
 
         alternatives_data = [alt.model_dump() for alt in alternatives]
 
-        # Save for selection (use normalized English key)
         await self._update_context(session_id, {
             "last_alternatives": alternatives_data,
-            "last_component_type": component_type,  # Normalized key for build dict
+            "last_component_type": component_type,
         })
 
         result = {
@@ -319,11 +283,12 @@ class ToolExecutor:
             "preference": preference,
         }
 
-        # Add warning about platform change if needed
-        if warning_message:
-            result["warning"] = warning_message
+        if warning:
+            result["warning"] = warning
 
         return result
+
+    # ===== Item Selection =====
 
     async def _tool_select_item(self, params: dict, session_id: str) -> dict:
         """Select an item from a list by number."""
@@ -331,7 +296,7 @@ class ToolExecutor:
 
         context = await self._get_context(session_id)
 
-        # Check what lists are available
+        # Check available lists
         alternatives = context.get("last_alternatives", [])
         peripherals = context.get("last_peripherals", [])
         search_results = context.get("last_search_results", [])
@@ -346,7 +311,7 @@ class ToolExecutor:
 
         selected = items_list[number]
 
-        # If selecting alternative component - update build
+        # Component replacement
         if alternatives:
             component_type = context.get("last_component_type", "")
             current_build = context.get("current_build", {})
@@ -377,7 +342,7 @@ class ToolExecutor:
                     "current_build": current_build,
                 }
 
-        # If selecting peripheral - add to build
+        # Peripheral selection
         if peripherals:
             peripheral_type = context.get("last_peripheral_type", "mouse")
             current_build = context.get("current_build", {})
@@ -410,22 +375,19 @@ class ToolExecutor:
                     "current_build": current_build,
                 }
 
-        # Just a product selection
-        return {
-            "selected": selected,
-            "action": "selected_product",
-        }
+        # Just product selection
+        return {"selected": selected, "action": "selected_product"}
+
+    # ===== Peripherals =====
 
     async def _tool_add_peripheral(self, params: dict, session_id: str) -> dict:
         """Add peripheral to build."""
         peripheral_type_raw = params.get("peripheral_type", "mouse")
-        # Normalize Russian name to English key (e.g., "монитор" -> "monitor")
         peripheral_type = normalize_peripheral_type(peripheral_type_raw)
         budget = params.get("budget")
 
-        logger.info(f"[PERIPHERAL] type='{peripheral_type_raw}' -> normalized='{peripheral_type}'")
+        logger.info(f"[PERIPHERAL] '{peripheral_type_raw}' -> '{peripheral_type}'")
 
-        # Map types to categories
         categories = {
             "monitor": ("Мониторы", ["Мониторы"]),
             "mouse": ("Мыши", ["Мыши"]),
@@ -450,16 +412,14 @@ class ToolExecutor:
 
         products_data = [ProductSchema.model_validate(p).model_dump() for p in products]
 
-        # Store normalized type for later selection
         await self._update_context(session_id, {
             "last_peripherals": products_data,
             "last_peripheral_type": peripheral_type,
         })
 
-        return {
-            "peripherals": products_data,
-            "peripheral_type": peripheral_type,
-        }
+        return {"peripherals": products_data, "peripheral_type": peripheral_type}
+
+    # ===== Build Display =====
 
     async def _tool_show_current_build(self, params: dict, session_id: str) -> dict:
         """Show current PC build."""
@@ -494,35 +454,36 @@ class ToolExecutor:
         else:
             return {"error": "Нет данных для показа характеристик"}
 
+    # ===== Delivery Info =====
+
     async def _tool_get_delivery_info(self, params: dict, session_id: str) -> dict:
-        """Get delivery and store information - filtered by topic."""
+        """Get delivery and store information."""
         topic = params.get("topic", "all")
         city = params.get("city", "").lower()
 
-        # Detect city from topic if specified
+        # Detect city from topic
         if topic in ["almaty", "astana", "pavlodar"]:
             city = topic
             topic = "city"
 
-        # Full data
         all_data = {
             "stores": {
                 "almaty": {
                     "name": "Алматы",
                     "address": "г. Алматы, проспект Абылай хана, 7 (вход со стороны ул.Тузова)",
-                    "hours": "Пн.-Пт.: 09:00-19:00, Сб.-Вс.: 09:00-17:00 (без перерыва)",
+                    "hours": "Пн.-Пт.: 09:00-19:00, Сб.-Вс.: 09:00-17:00",
                     "phones": ["+7 747 601-03-25", "+7 7273 51-28-51"],
                 },
                 "astana": {
                     "name": "Астана",
-                    "address": "г. Астана, проспект Республики, 72 (со стороны Республики)",
-                    "hours": "Пн.-Пт.: 10:00-19:00 (без перерыва), Сб.-Вс.: выходной",
+                    "address": "г. Астана, проспект Республики, 72",
+                    "hours": "Пн.-Пт.: 10:00-19:00, Сб.-Вс.: выходной",
                     "phones": ["+7 707 956-50-26", "+7 7172 39-52-80"],
                 },
                 "pavlodar": {
                     "name": "Павлодар",
-                    "address": "г. Павлодар, ул. Желтоксан, 7 (бывшая Володарского)",
-                    "hours": "Пн.-Пт.: 10:00-19:00, Сб.-Вс.: 10:00-17:00 (без перерыва)",
+                    "address": "г. Павлодар, ул. Желтоксан, 7",
+                    "hours": "Пн.-Пт.: 10:00-19:00, Сб.-Вс.: 10:00-17:00",
                     "phones": ["+7 7182 77-70-55"],
                     "service_center": "+7 7182 39-36-89",
                 },
@@ -532,21 +493,19 @@ class ToolExecutor:
                 "kaspi_orders": "+7 775 894-93-84",
                 "email": "sales@overclockers.kz",
                 "instagram": "https://www.instagram.com/over.kz/",
-                "website": "https://over-shop.kz/",
             },
             "delivery": {
-                "pickup": "Самовывоз из магазинов в Алматы, Астане, Павлодаре",
+                "pickup": "Самовывоз из магазинов",
                 "courier": "Доставка курьером по городу",
                 "express": "Экспресс-доставка",
-                "transport": "JetLogistic, Exline, DPD, ABT и другие",
+                "transport": "JetLogistic, Exline, DPD, ABT",
             },
             "payment": {
-                "methods": ["Картой онлайн", "Рассрочка 0-0-12 от Kaspi", "Наличными при получении"],
-                "info_url": "https://over-shop.kz/help/payment/",
+                "methods": ["Картой онлайн", "Рассрочка 0-0-12 от Kaspi", "Наличными"],
             },
         }
 
-        # Return filtered data based on topic
+        # Filtered responses
         if topic == "phone":
             return {
                 "topic": "phone",
@@ -568,27 +527,17 @@ class ToolExecutor:
             }
 
         if topic == "delivery":
-            return {
-                "topic": "delivery",
-                "delivery": all_data["delivery"],
-            }
+            return {"topic": "delivery", "delivery": all_data["delivery"]}
 
         if topic == "payment":
-            return {
-                "topic": "payment",
-                "payment": all_data["payment"],
-            }
+            return {"topic": "payment", "payment": all_data["payment"]}
 
         if topic == "city" and city:
             city_key = city.replace("алматы", "almaty").replace("астана", "astana").replace("павлодар", "pavlodar")
             if city_key in all_data["stores"]:
-                return {
-                    "topic": "city",
-                    "city": city_key,
-                    "store": all_data["stores"][city_key],
-                }
+                return {"topic": "city", "city": city_key, "store": all_data["stores"][city_key]}
 
-        # Return all data if no specific topic
+        # Full data
         return {
             "topic": "all",
             "stores": all_data["stores"],
@@ -597,13 +546,13 @@ class ToolExecutor:
             "payment": all_data["payment"],
         }
 
+    # ===== Manager =====
+
     async def _tool_call_manager(self, params: dict, session_id: str) -> dict:
-        """Escalate to manager - set session status to waiting_manager."""
+        """Escalate to manager."""
         reason = params.get("reason", "запрос клиента")
 
-        # Escalate session to manager
         await self.chat_repo.escalate_to_manager(session_id, reason)
-
         logger.warning(f"[MANAGER] Session {session_id} escalated: {reason}")
 
         return {
@@ -612,36 +561,36 @@ class ToolExecutor:
             "message": "Диалог передан менеджеру",
         }
 
+    # ===== FAQ =====
+
     async def _tool_answer_faq(self, params: dict, session_id: str) -> dict:
         """Answer FAQ question."""
         topic = params.get("topic", "")
 
-        # Static FAQ answers
-        faq_answers = {
-            "гарантия": "Гарантия на все товары - от 12 до 36 месяцев в зависимости от производителя.",
-            "возврат": "Возврат товара возможен в течение 14 дней при сохранении товарного вида.",
-            "оплата": "Принимаем оплату картой, наличными и в рассрочку через Kaspi.",
+        faq = {
+            "гарантия": "Гарантия на все товары - от 12 до 36 месяцев.",
+            "возврат": "Возврат товара возможен в течение 14 дней.",
+            "оплата": "Принимаем картой, наличными и в рассрочку через Kaspi.",
             "доставка": "Бесплатная доставка по Алматы от 50,000₸. В другие города - 3-7 дней.",
         }
 
-        # Find matching FAQ
         topic_lower = topic.lower()
-        for key, answer in faq_answers.items():
+        for key, answer in faq.items():
             if key in topic_lower:
                 return {"answer": answer, "topic": key}
 
         return {"answer": None, "topic": topic}
+
+    # ===== General =====
 
     async def _tool_general_response(self, params: dict, session_id: str) -> dict:
         """Handle general conversation."""
         return {"type": "general"}
 
     async def _tool_clarify_intent(self, params: dict, session_id: str) -> dict:
-        """Ask user to clarify their intent (buy separate vs modify build)."""
+        """Ask user to clarify their intent."""
         component = params.get("component", "товар")
-        options = params.get("options", ["replace", "buy_separate"])
 
-        # Map component names
         component_names = {
             "cpu": "процессор",
             "gpu": "видеокарту",
@@ -656,7 +605,7 @@ class ToolExecutor:
         return {
             "type": "clarification",
             "component": display_name,
-            "question": f"Уточните, пожалуйста: вы хотите заменить {display_name} в текущей сборке или купить {display_name} отдельно?",
+            "question": f"Уточните: заменить {display_name} в сборке или купить отдельно?",
             "options": [
                 {"key": "replace", "text": f"Заменить {display_name} в сборке"},
                 {"key": "buy_separate", "text": f"Купить {display_name} отдельно"},
