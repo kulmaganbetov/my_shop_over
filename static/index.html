@@ -824,7 +824,7 @@
         // Start polling for new messages
         function startPolling() {
             if (pollingInterval) return;
-            pollingInterval = setInterval(pollForMessages, 3000);
+            pollingInterval = setInterval(pollForMessages, 5000); // 5s instead of 3s
         }
 
         // Stop polling

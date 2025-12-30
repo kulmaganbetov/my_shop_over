@@ -1466,12 +1466,22 @@
                 if (!currentSessionId) return;
                 try {
                     const res = await fetch(`${API_URL}/sessions/${currentSessionId}/messages`, { credentials: 'include' });
+                    // Don't update chat on error (429, 500, etc.) - keep showing current messages
+                    if (!res.ok) {
+                        if (res.status === 429) {
+                            console.warn('Rate limited, skipping update');
+                        }
+                        return; // Keep current chat, don't clear
+                    }
                     const data = await res.json();
-                    renderChatLog(data.messages || []);
+                    if (data.messages) {
+                        renderChatLog(data.messages);
+                    }
                 } catch (e) {
                     console.error('Chat polling error:', e);
+                    // Don't clear chat on error
                 }
-            }, 3000);
+            }, 5000); // Increased from 3s to 5s
         }
 
         function stopChatPolling() {
