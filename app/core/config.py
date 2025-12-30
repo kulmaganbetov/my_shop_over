@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: Literal["openai", "anthropic"] = "openai"
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-4o"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-haiku-20240307"
 
