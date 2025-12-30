@@ -87,25 +87,14 @@ class ProductSearchService:
             products = self._filter_accessories(products, params.category)
             products = products[:params.limit]
 
+            # If vector search returned nothing, try text search as fallback
+            if not products:
+                logger.info(f"Vector search empty, trying text search for: {params.query}")
+                products = await self._text_search_fallback(params)
+
         except Exception as e:
             logger.warning(f"Vector search failed, falling back to text search: {e}")
-
-            # Fallback to text search
-            text_results = await self.product_repo.search_by_name(
-                query=params.query,
-                limit=params.limit * 2,
-                category=params.category,
-                in_stock_only=params.in_stock_only,
-            )
-
-            products = [
-                ProductSchema.model_validate(product)
-                for product in text_results
-            ]
-
-            # Filter out accessories
-            products = self._filter_accessories(products, params.category)
-            products = products[:params.limit]
+            products = await self._text_search_fallback(params)
 
         return ProductSearchResponse(
             products=products,
@@ -113,6 +102,35 @@ class ProductSearchService:
             query=params.query,
             filters_applied=filters_applied,
         )
+
+    async def _text_search_fallback(self, params: ProductSearchParams) -> list[ProductSchema]:
+        """Fallback text search when vector search fails or returns empty."""
+        # Try with category first
+        text_results = await self.product_repo.search_by_name(
+            query=params.query,
+            limit=params.limit * 2,
+            category=params.category,
+            in_stock_only=params.in_stock_only,
+        )
+
+        # If nothing found with category, try without
+        if not text_results and params.category:
+            logger.info(f"No results with category '{params.category}', searching without")
+            text_results = await self.product_repo.search_by_name(
+                query=params.query,
+                limit=params.limit * 2,
+                category=None,
+                in_stock_only=params.in_stock_only,
+            )
+
+        products = [
+            ProductSchema.model_validate(product)
+            for product in text_results
+        ]
+
+        # Filter out accessories
+        products = self._filter_accessories(products, params.category)
+        return products[:params.limit]
 
     async def search_by_component_type(
         self,

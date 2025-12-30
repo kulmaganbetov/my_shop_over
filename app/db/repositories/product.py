@@ -42,7 +42,8 @@ class ProductRepository(BaseRepository[Product]):
         conditions = [Product.name.ilike(f"%{query}%")]
 
         if category:
-            conditions.append(Product.category == category)
+            # Case-insensitive category match
+            conditions.append(Product.category.ilike(f"%{category}%"))
         if in_stock_only:
             conditions.append(Product.stock > 0)
 
@@ -70,7 +71,8 @@ class ProductRepository(BaseRepository[Product]):
         conditions = [Product.is_active == True]
 
         if category:
-            conditions.append(Product.category == category)
+            # Case-insensitive category match
+            conditions.append(Product.category.ilike(f"%{category}%"))
         if min_price is not None and min_price > 0:
             conditions.append(
                 or_(Product.price >= min_price, Product.discount_price >= min_price)
