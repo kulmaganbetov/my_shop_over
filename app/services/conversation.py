@@ -193,7 +193,7 @@ COMPONENT_KEYWORDS = {
     "gpu": ["видеокарт", "видюх", "gpu", "график"],
     "motherboard": ["материнск", "motherboard", "мат плат", "мп"],
     "ram": ["оперативн", "ram", "озу", "память"],
-    "storage": ["накопитель", "ssd", "диск", "storage"],
+    "storage": ["накопитель", "ssd", "ссд", "диск", "storage", "твердотел"],
     "psu": ["блок питан", "psu", "бп"],
     "case": ["корпус", "case", "кейс"],
     "cooler": ["кулер", "охлаждени", "cooler"],
@@ -340,7 +340,20 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
         if context.has_build():
             return Intent.ADD_PERIPHERAL, {"peripheral_type": peripheral}
 
-    # 10. Check for product search
+    # 10. Check for "tell me about component" queries (расскажи о ssd, подробнее о видеокарте)
+    info_keywords = ["расскажи", "подробн", "информаци", "характеристик", "опиши"]
+    if context.has_build() and any(kw in msg_lower for kw in info_keywords):
+        comp_type = detect_component_type(msg_lower)
+        if comp_type:
+            # Build component info question
+            component_name = context.current_build.get(comp_type, {}).get("name", comp_type)
+            return Intent.ASK_QUESTION, {
+                "question": f"Расскажи о {component_name}",
+                "component_type": comp_type,
+                "component_info": context.current_build.get(comp_type)
+            }
+
+    # 11. Check for product search
     category = detect_category(msg_lower)
     if category or any(kw in msg_lower for kw in INTENT_KEYWORDS[Intent.SEARCH_PRODUCT]):
         return Intent.SEARCH_PRODUCT, {
@@ -348,7 +361,7 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
             "category": category
         }
 
-    # 11. Check if it's a question
+    # 12. Check if it's a question
     if "?" in message or any(w in msg_lower for w in ["как", "что", "почему", "зачем", "можно ли", "нужно ли"]):
         return Intent.ASK_QUESTION, {"question": message}
 

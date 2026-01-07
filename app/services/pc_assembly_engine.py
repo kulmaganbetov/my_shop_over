@@ -446,8 +446,8 @@ class BudgetBalancer:
     # Budget allocation percentages by purpose
     ALLOCATION_PROFILES = {
         "gaming": {
-            "cpu": 0.18, "motherboard": 0.10, "ram": 0.10,
-            "gpu": 0.40, "psu": 0.07, "case": 0.05, "storage": 0.08, "cooler": 0.02,
+            "cpu": 0.18, "motherboard": 0.10, "ram": 0.12,
+            "gpu": 0.38, "psu": 0.07, "case": 0.05, "storage": 0.08, "cooler": 0.02,
         },
         "work": {
             "cpu": 0.28, "motherboard": 0.12, "ram": 0.15,
@@ -960,16 +960,20 @@ class PCAssemblyEngine:
         """Select RAM matching motherboard type.
 
         For gaming, STRONGLY prefer 16GB+ (8GB is inadequate for modern games).
+        Will search with extended budget (up to 1.5x) if 16GB not found initially.
         """
+        # First search with normal budget, then try extended if no 16GB found
+        extended_budget = int(budget * 1.5)
+
         products = await self._query_products(
             categories=["Оперативная память"],
-            max_price=budget,
+            max_price=extended_budget,  # Search with extended budget
         )
 
         best = None
         best_score = -1
         best_16gb = None
-        best_16gb_score = -1
+        best_16gb_price = float('inf')
 
         for p in products:
             name_lower = p.name.lower()
@@ -989,50 +993,56 @@ class PCAssemblyEngine:
                 continue
 
             price = p.discount_price or p.price or 0
-            if price > budget:
-                continue
 
-            score = price
+            # For 16GB+, allow up to extended budget; for 8GB only normal budget
+            if specs.size_gb >= 16:
+                if price > extended_budget:
+                    continue
+                # Track cheapest 16GB+ option
+                if price < best_16gb_price:
+                    best_16gb_price = price
+                    best_16gb = BuildComponent(
+                        product_id=p.id,
+                        name=p.name,
+                        price=p.price or 0,
+                        discount_price=p.discount_price or 0,
+                        specs=specs,
+                        component_type="ram"
+                    )
+            else:
+                # For 8GB or less, only consider if within original budget
+                if price > budget:
+                    continue
 
-            # STRONGLY prefer 16GB+ (gaming requirement)
-            if specs.size_gb >= 32:
-                score *= 2.0  # Strong bonus for 32GB
-            elif specs.size_gb >= 16:
-                score *= 1.5  # Good bonus for 16GB
-            elif specs.size_gb <= 8:
-                score *= 0.3  # Heavy penalty for 8GB or less
+                score = price
+                # Penalize 8GB heavily
+                if specs.size_gb <= 8:
+                    score *= 0.3
 
-            # Prefer higher frequency
-            if specs.frequency >= 6000 and ram_type == RAMType.DDR5:
-                score *= 1.15
-            elif specs.frequency >= 3600 and ram_type == RAMType.DDR4:
-                score *= 1.15
+                # Prefer higher frequency
+                if specs.frequency >= 6000 and ram_type == RAMType.DDR5:
+                    score *= 1.15
+                elif specs.frequency >= 3600 and ram_type == RAMType.DDR4:
+                    score *= 1.15
 
-            # Track best 16GB+ option separately
-            if specs.size_gb >= 16 and score > best_16gb_score:
-                best_16gb_score = score
-                best_16gb = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="ram"
-                )
+                if score > best_score:
+                    best_score = score
+                    best = BuildComponent(
+                        product_id=p.id,
+                        name=p.name,
+                        price=p.price or 0,
+                        discount_price=p.discount_price or 0,
+                        specs=specs,
+                        component_type="ram"
+                    )
 
-            if score > best_score:
-                best_score = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="ram"
-                )
+        # ALWAYS prefer 16GB+ over 8GB, even if more expensive
+        if best_16gb:
+            logger.info(f"[RAM] Selected 16GB+: {best_16gb.name} at {best_16gb_price}")
+            return best_16gb
 
-        # Return 16GB+ if available, otherwise best available
-        return best_16gb if best_16gb else best
+        logger.warning(f"[RAM] No 16GB+ found for {ram_type.value}, falling back to smaller RAM")
+        return best
 
     async def _select_gpu(self, budget: int, purpose: str) -> Optional[BuildComponent]:
         """Select GPU within budget."""
