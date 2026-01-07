@@ -978,6 +978,10 @@ class PCAssemblyEngine:
             if "so-dimm" in name_lower or "sodimm" in name_lower or "ноутбук" in name_lower:
                 continue
 
+            # Skip server RAM (ECC, RDIMM, LRDIMM, Registered)
+            if any(x in name_lower for x in ["сервер", "server", "ecc", "rdimm", "lrdimm", "registered"]):
+                continue
+
             specs = self.parser.parse_ram(p.name)
 
             # MUST match RAM type
@@ -1485,7 +1489,11 @@ class PCAssemblyEngine:
 
             for p in products:
                 name_lower = p.name.lower()
+                # Skip laptop RAM
                 if "so-dimm" in name_lower or "sodimm" in name_lower:
+                    continue
+                # Skip server RAM
+                if any(x in name_lower for x in ["сервер", "server", "ecc", "rdimm", "lrdimm", "registered"]):
                     continue
 
                 specs = self.parser.parse_ram(p.name)
@@ -1571,6 +1579,81 @@ class PCAssemblyEngine:
                         "wattage": specs.wattage,
                         "efficiency": specs.efficiency,
                     })
+
+        elif component_type == "storage":
+            # Storage has no compatibility requirements
+            products = await self._query_products(
+                categories=["Твердотельные диски (SSD)", "SSD накопители", "SSD"],
+                max_price=budget,
+            )
+
+            for p in products:
+                name_lower = p.name.lower()
+                # Skip external drives
+                if "внешний" in name_lower or "external" in name_lower or "portable" in name_lower:
+                    continue
+
+                # Extract capacity from name
+                capacity = "N/A"
+                import re
+                cap_match = re.search(r"(\d+)\s*(tb|тб|gb|гб)", name_lower)
+                if cap_match:
+                    size = int(cap_match.group(1))
+                    unit = cap_match.group(2).lower()
+                    if unit in ["tb", "тб"]:
+                        capacity = f"{size}TB"
+                    else:
+                        capacity = f"{size}GB"
+
+                alternatives.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                    "capacity": capacity,
+                })
+
+        elif component_type == "case":
+            # Case has no compatibility requirements (simplified)
+            products = await self._query_products(
+                categories=["Корпуса"],
+                max_price=budget,
+            )
+
+            for p in products:
+                alternatives.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                })
+
+        elif component_type == "cooler":
+            # Cooler - filter by socket if CPU exists
+            products = await self._query_products(
+                categories=["Кулеры для процессоров", "Кулеры"],
+                max_price=budget,
+            )
+
+            socket_kw = []
+            if current_build.cpu and current_build.cpu.specs.socket:
+                if current_build.cpu.specs.socket in [Socket.AM4, Socket.AM5]:
+                    socket_kw = ["am4", "am5", "amd"]
+                elif current_build.cpu.specs.socket == Socket.LGA1700:
+                    socket_kw = ["lga1700", "lga 1700", "1700", "intel"]
+
+            for p in products:
+                name_lower = p.name.lower()
+                # Prefer socket-compatible coolers
+                if socket_kw and not any(kw in name_lower for kw in socket_kw):
+                    continue
+
+                alternatives.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                })
 
         # Sort by price
         alternatives.sort(key=lambda x: x.get("discount_price") or x.get("price") or 0)
