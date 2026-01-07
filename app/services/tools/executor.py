@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import ChatRepository, ProductRepository
 from app.schemas.common import ProductSchema
-from app.schemas.llm import PCBuildParams, ProductSearchParams
-from app.services.pc_build import PCBuildService
+from app.schemas.llm import ProductSearchParams
 from app.services.product_search import ProductSearchService
 
 logger = logging.getLogger(__name__)
@@ -188,42 +187,54 @@ class ToolExecutor:
                     return category
         return None
 
-    # ===== PC Build =====
+    # ===== PC Build (Using PCAssemblyEngine - Zero Hallucination) =====
 
     async def _tool_build_pc(self, params: dict, session_id: str) -> dict:
-        """Build a PC configuration."""
-        from app.llm.service import LLMService
+        """Build a PC configuration using PCAssemblyEngine.
+
+        This uses deterministic chain-of-constraints logic:
+        1. CPU selection by budget
+        2. Motherboard MUST match CPU socket
+        3. RAM MUST match motherboard type
+        4. GPU within remaining budget
+        5. PSU with sufficient wattage
+        6. Safety: ALL queries require stock > 0
+        """
+        from app.services.pc_assembly_engine import PCAssemblyEngine
 
         budget = params.get("budget")
         purpose = params.get("purpose", "gaming")
 
-        # Default budgets
+        # Default budgets by purpose
         if not budget:
-            defaults = {"gaming": 500000, "office": 200000, "work": 700000}
+            defaults = {"gaming": 500000, "office": 200000, "work": 700000, "streaming": 600000}
             budget = defaults.get(purpose, 450000)
 
-        build_params = PCBuildParams(budget=budget, purpose=purpose)
+        engine = PCAssemblyEngine(self.session)
+        build = await engine.build_pc(budget=budget, purpose=purpose)
 
-        build_service = PCBuildService(self.session, LLMService())
-        result = await build_service.recommend_build(build_params)
-
-        build_data = result.model_dump()
+        # Convert to response format
+        build_data = build.to_dict()
 
         await self._update_context(session_id, {
             "current_build": build_data,
             "original_budget": budget,
+            "build_purpose": purpose,
         })
+
+        logger.info(f"[BUILD] Completed: total={build.total_price()}, valid={build.is_valid()}")
 
         return build_data
 
     async def _tool_modify_build(self, params: dict, session_id: str) -> dict:
-        """Modify current build budget."""
-        from app.llm.service import LLMService
+        """Modify current build budget - rebuild with new budget."""
+        from app.services.pc_assembly_engine import PCAssemblyEngine
 
         modifier = params.get("modifier", "higher")
 
         context = await self._get_context(session_id)
         current_build = context.get("current_build", {})
+        purpose = context.get("build_purpose", "gaming")
 
         if not current_build:
             return {"error": "Сначала нужно собрать ПК"}
@@ -235,58 +246,111 @@ class ToolExecutor:
         else:
             new_budget = int(prev_price * 0.6)
 
-        build_params = PCBuildParams(budget=new_budget, purpose="gaming")
+        engine = PCAssemblyEngine(self.session)
+        build = await engine.build_pc(budget=new_budget, purpose=purpose)
 
-        build_service = PCBuildService(self.session, LLMService())
-        result = await build_service.recommend_build(build_params)
-
-        build_data = result.model_dump()
-        await self._update_context(session_id, {"current_build": build_data})
+        build_data = build.to_dict()
+        await self._update_context(session_id, {
+            "current_build": build_data,
+            "original_budget": new_budget,
+        })
 
         return build_data
 
-    # ===== Component Alternatives =====
+    # ===== Component Alternatives (Compatibility-Aware) =====
 
     async def _tool_get_alternatives(self, params: dict, session_id: str) -> dict:
-        """Get alternative components."""
-        from app.llm.service import LLMService
-        from app.services.pc_build import normalize_component_type
+        """Get alternative components using PCAssemblyEngine.
+
+        Returns only components compatible with the current build:
+        - Motherboard alternatives must match CPU socket
+        - RAM alternatives must match motherboard type
+        - CPU alternatives must match motherboard socket
+        - PSU alternatives must have sufficient wattage
+        """
+        from app.services.pc_assembly_engine import PCAssemblyEngine, PCBuild, BuildComponent
+
+        # Normalize component type
+        component_type_map = {
+            "процессор": "cpu", "cpu": "cpu", "проц": "cpu",
+            "видеокарта": "gpu", "gpu": "gpu", "видеокарту": "gpu",
+            "материнская плата": "motherboard", "материнка": "motherboard",
+            "оперативная память": "ram", "ram": "ram", "память": "ram",
+            "накопитель": "storage", "ssd": "storage",
+            "блок питания": "psu", "psu": "psu", "бп": "psu",
+            "корпус": "case", "case": "case",
+            "кулер": "cooler", "cooler": "cooler",
+        }
 
         component_type_raw = params.get("component_type", "gpu")
-        component_type = normalize_component_type(component_type_raw)
+        component_type = component_type_map.get(component_type_raw.lower(), component_type_raw)
         preference = params.get("preference")
+        budget = params.get("budget")
 
         context = await self._get_context(session_id)
-        current_build = context.get("current_build", {})
+        current_build_data = context.get("current_build", {})
 
-        if not current_build or not current_build.get("build"):
+        if not current_build_data or not current_build_data.get("build"):
             return {"error": "Сначала нужно собрать ПК"}
 
-        build_service = PCBuildService(self.session, LLMService())
-        alternatives, warning = await build_service.get_component_alternatives(
+        # Reconstruct PCBuild object for compatibility checking
+        engine = PCAssemblyEngine(self.session)
+
+        # Create a mock PCBuild from stored data
+        build_dict = current_build_data.get("build", {})
+
+        # Create PCBuild with parsed specs
+        pc_build = PCBuild()
+        for comp_type, comp_data in build_dict.items():
+            if comp_data:
+                # Parse specs based on component type
+                if comp_type == "cpu":
+                    specs = engine.parser.parse_cpu(comp_data.get("name", ""))
+                elif comp_type == "motherboard":
+                    specs = engine.parser.parse_motherboard(comp_data.get("name", ""))
+                elif comp_type == "ram":
+                    specs = engine.parser.parse_ram(comp_data.get("name", ""))
+                elif comp_type == "gpu":
+                    specs = engine.parser.parse_gpu(comp_data.get("name", ""))
+                elif comp_type == "psu":
+                    specs = engine.parser.parse_psu(comp_data.get("name", ""))
+                else:
+                    specs = None
+
+                setattr(pc_build, comp_type, BuildComponent(
+                    product_id=comp_data.get("id", 0),
+                    name=comp_data.get("name", ""),
+                    price=comp_data.get("price", 0),
+                    discount_price=comp_data.get("discount_price", 0),
+                    specs=specs,
+                    component_type=comp_type,
+                ))
+
+        # Get compatible alternatives
+        alternatives = await engine.get_compatible_alternatives(
+            current_build=pc_build,
             component_type=component_type,
-            current_build=current_build.get("build", {}),
+            budget=budget,
             preference=preference,
-            limit=5,
         )
 
-        alternatives_data = [alt.model_dump() for alt in alternatives]
-
         await self._update_context(session_id, {
-            "last_alternatives": alternatives_data,
+            "last_alternatives": alternatives,
             "last_component_type": component_type,
         })
 
-        result = {
-            "alternatives": alternatives_data,
+        if not alternatives:
+            return {
+                "alternatives": [],
+                "component_type": component_type,
+                "error": f"Совместимые альтернативы для {component_type} не найдены в наличии",
+            }
+
+        return {
+            "alternatives": alternatives,
             "component_type": component_type,
             "preference": preference,
         }
-
-        if warning:
-            result["warning"] = warning
-
-        return result
 
     # ===== Item Selection =====
 

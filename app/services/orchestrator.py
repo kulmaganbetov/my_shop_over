@@ -447,17 +447,31 @@ class Orchestrator:
         lines.append(f"\n**Итого картой: {total:,.0f}**")
         lines.append(f"**Итого в рассрочку: {total_installment:,.0f}**")
 
-        # Show warnings as info, not errors
+        # Show warnings from PCAssemblyEngine
         warnings = data.get("warnings", [])
         if warnings:
-            lines.append("\nПримечания:")
+            lines.append("\n**Примечания:**")
             for w in warnings:
-                lines.append(f"- {w}")
+                # Handle both string and dict format
+                if isinstance(w, dict):
+                    lines.append(f"- {w.get('message', str(w))}")
+                else:
+                    lines.append(f"- {w}")
 
-        # Compatibility notes
+        # Show errors (should not happen in valid build)
+        errors = data.get("errors", [])
+        if errors:
+            lines.append("\n**Внимание:**")
+            for e in errors:
+                if isinstance(e, dict):
+                    lines.append(f"⚠️ {e.get('message', str(e))}")
+                else:
+                    lines.append(f"⚠️ {e}")
+
+        # Compatibility notes (legacy format)
         compat_notes = data.get("compatibility_notes", [])
         if compat_notes:
-            lines.append("\n**Важно:**")
+            lines.append("\n**Совместимость:**")
             for note in compat_notes:
                 lines.append(f"- {note}")
 
