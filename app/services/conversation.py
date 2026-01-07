@@ -139,10 +139,11 @@ INTENT_KEYWORDS = {
     ],
     Intent.MODIFY_BUILD: [
         "дороже", "дешевле", "подороже", "подешевле",
-        "более дорогую", "более дешевую", "бюджетнее"
+        "более дорогую", "более дешевую", "бюджетнее",
+        "слишком дорого"
     ],
     Intent.REPLACE_COMPONENT: [
-        "замени", "поменяй", "смени", "другой", "другую",
+        "замени", "замена", "поменяй", "смени", "другой", "другую",
         "альтернатив", "вместо"
     ],
     Intent.ADD_PERIPHERAL: [
@@ -253,7 +254,11 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
     # 2. Check for continuation (дороже/дешевле without specifics)
     for kw in INTENT_KEYWORDS[Intent.MODIFY_BUILD]:
         if kw in msg_lower:
-            modifier = "lower" if any(w in msg_lower for w in ["дешевле", "подешевле", "бюджетнее"]) else "higher"
+            # "слишком дорого" = too expensive = want cheaper (lower)
+            # "дешевле" = want cheaper (lower)
+            # "дороже" = want more expensive (higher)
+            want_cheaper = ["дешевле", "подешевле", "бюджетнее", "слишком дорого"]
+            modifier = "lower" if any(w in msg_lower for w in want_cheaper) else "higher"
 
             # Apply to last action
             if context.last_action == LastAction.BUILD_PC and context.has_build():
@@ -317,6 +322,13 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
         # Extract budget if mentioned
         budget = extract_budget(msg_lower)
         purpose = extract_purpose(msg_lower)
+
+        # If user already has a build and doesn't specify new budget,
+        # show existing build instead of starting over
+        if context.has_build() and not budget:
+            # Ambiguous request - show existing build
+            return Intent.SHOW_BUILD, {}
+
         return Intent.BUILD_PC, {"budget": budget, "purpose": purpose}
 
     # 8. Check for component replacement (need existing build)
