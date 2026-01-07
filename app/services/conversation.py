@@ -216,15 +216,39 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
     Returns:
         tuple: (intent, params dict)
     """
+    import re
+
     msg_lower = message.lower().strip()
     params = {}
 
-    # 1. Check for number selection (1-9)
-    if msg_lower.isdigit() or msg_lower in ["первый", "второй", "третий", "четвертый", "пятый"]:
-        number_map = {"первый": 1, "второй": 2, "третий": 3, "четвертый": 4, "пятый": 5}
-        num = int(msg_lower) if msg_lower.isdigit() else number_map.get(msg_lower, 1)
-        if context.has_shown_items():
-            return Intent.SELECT_ITEM, {"number": num}
+    # 1. Check for number selection - enhanced patterns
+    # Patterns: "1", "первый", "замени на 1", "выбираю 2", "поставь 3", "беру 1"
+    number_map = {"первый": 1, "второй": 2, "третий": 3, "четвертый": 4, "пятый": 5}
+
+    selected_num = None
+
+    # Direct number
+    if msg_lower.isdigit():
+        selected_num = int(msg_lower)
+    # Word number
+    elif msg_lower in number_map:
+        selected_num = number_map[msg_lower]
+    # Number in phrase: "замени на 1", "выбираю 2", "поставь 3"
+    elif context.has_shown_items():
+        # Look for selection patterns with numbers
+        select_patterns = [
+            r"(?:замени|выбир|поставь|беру|ставлю|хочу|давай)\s*(?:на\s*)?(\d)",
+            r"(?:вариант|номер|пункт)\s*(\d)",
+            r"^(\d)\s*(?:вариант|пункт)?$",
+        ]
+        for pattern in select_patterns:
+            match = re.search(pattern, msg_lower)
+            if match:
+                selected_num = int(match.group(1))
+                break
+
+    if selected_num and context.has_shown_items():
+        return Intent.SELECT_ITEM, {"number": selected_num}
 
     # 2. Check for continuation (дороже/дешевле without specifics)
     for kw in INTENT_KEYWORDS[Intent.MODIFY_BUILD]:

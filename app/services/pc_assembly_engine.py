@@ -1592,6 +1592,9 @@ class PCAssemblyEngine:
                 # Skip external drives
                 if "внешний" in name_lower or "external" in name_lower or "portable" in name_lower:
                     continue
+                # Skip server SSDs
+                if any(x in name_lower for x in ["сервер", "server", "enterprise", "datacenter"]):
+                    continue
 
                 # Extract capacity from name
                 capacity = "N/A"
