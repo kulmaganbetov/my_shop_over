@@ -795,9 +795,14 @@ class PCAssemblyEngine:
             ))
             return build
 
-        # Step 4: Select GPU (flexible budget - can use more if available)
-        gpu_budget = min(allocation.gpu + int(remaining * 0.5), remaining)
-        if purpose == "gaming":
+        # Step 4: Select GPU
+        # IMPORTANT: Reserve budget for PSU, storage, case BEFORE GPU selection
+        reserved_for_essentials = allocation.psu + allocation.storage + allocation.case + 10000  # +10k buffer
+        max_gpu_budget = remaining - reserved_for_essentials
+
+        if purpose == "gaming" and max_gpu_budget > 50000:
+            # GPU gets its allocation + some extra, but NOT everything
+            gpu_budget = min(allocation.gpu + int(max_gpu_budget * 0.3), max_gpu_budget)
             gpu_result = await self._select_gpu(gpu_budget, purpose)
             if gpu_result:
                 build.gpu = gpu_result
@@ -809,23 +814,29 @@ class PCAssemblyEngine:
         gpu_tdp = build.gpu.specs.tdp if build.gpu else 150
         required_wattage = int((cpu_tdp + gpu_tdp) * 1.25) + 100
 
-        psu_result = await self._select_psu(min(allocation.psu, remaining), required_wattage)
+        # PSU budget: use allocation or more if needed
+        psu_budget = max(allocation.psu, min(int(remaining * 0.35), 60000))
+        psu_result = await self._select_psu(psu_budget, required_wattage)
         if psu_result:
             build.psu = psu_result
             remaining -= psu_result.discount_price or psu_result.price
             logger.info(f"[BUILD] PSU: {psu_result.name}")
 
         # Step 6: Fill remaining - Storage
-        storage_result = await self._select_storage(min(allocation.storage, remaining))
+        storage_budget = max(allocation.storage, min(int(remaining * 0.5), 50000))
+        storage_result = await self._select_storage(storage_budget)
         if storage_result:
             build.storage = storage_result
             remaining -= storage_result.discount_price or storage_result.price
+            logger.info(f"[BUILD] Storage: {storage_result.name}")
 
         # Step 7: Fill remaining - Case
-        case_result = await self._select_case(min(allocation.case, remaining))
+        case_budget = max(allocation.case, remaining)
+        case_result = await self._select_case(case_budget)
         if case_result:
             build.case = case_result
             remaining -= case_result.discount_price or case_result.price
+            logger.info(f"[BUILD] Case: {case_result.name}")
 
         # Final validation
         build.compatibility_issues.extend(
@@ -946,7 +957,10 @@ class PCAssemblyEngine:
         return best
 
     async def _select_ram(self, budget: int, ram_type: RAMType) -> Optional[BuildComponent]:
-        """Select RAM matching motherboard type."""
+        """Select RAM matching motherboard type.
+
+        For gaming, STRONGLY prefer 16GB+ (8GB is inadequate for modern games).
+        """
         products = await self._query_products(
             categories=["Оперативная память"],
             max_price=budget,
@@ -954,6 +968,8 @@ class PCAssemblyEngine:
 
         best = None
         best_score = -1
+        best_16gb = None
+        best_16gb_score = -1
 
         for p in products:
             name_lower = p.name.lower()
@@ -974,17 +990,31 @@ class PCAssemblyEngine:
 
             score = price
 
-            # Prefer higher capacity
+            # STRONGLY prefer 16GB+ (gaming requirement)
             if specs.size_gb >= 32:
-                score *= 1.2
+                score *= 2.0  # Strong bonus for 32GB
             elif specs.size_gb >= 16:
-                score *= 1.1
+                score *= 1.5  # Good bonus for 16GB
+            elif specs.size_gb <= 8:
+                score *= 0.3  # Heavy penalty for 8GB or less
 
             # Prefer higher frequency
             if specs.frequency >= 6000 and ram_type == RAMType.DDR5:
-                score *= 1.1
+                score *= 1.15
             elif specs.frequency >= 3600 and ram_type == RAMType.DDR4:
-                score *= 1.1
+                score *= 1.15
+
+            # Track best 16GB+ option separately
+            if specs.size_gb >= 16 and score > best_16gb_score:
+                best_16gb_score = score
+                best_16gb = BuildComponent(
+                    product_id=p.id,
+                    name=p.name,
+                    price=p.price or 0,
+                    discount_price=p.discount_price or 0,
+                    specs=specs,
+                    component_type="ram"
+                )
 
             if score > best_score:
                 best_score = score
@@ -997,7 +1027,8 @@ class PCAssemblyEngine:
                     component_type="ram"
                 )
 
-        return best
+        # Return 16GB+ if available, otherwise best available
+        return best_16gb if best_16gb else best
 
     async def _select_gpu(self, budget: int, purpose: str) -> Optional[BuildComponent]:
         """Select GPU within budget."""
