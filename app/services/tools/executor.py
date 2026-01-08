@@ -222,7 +222,7 @@ class ToolExecutor:
             "build_purpose": purpose,
         })
 
-        logger.info(f"[BUILD] Completed: total={build.total_price()}, valid={build.is_valid()}")
+        logger.info(f"[BUILD] Completed: total={build.total_price()}, success={build.success}")
 
         return build_data
 
@@ -268,7 +268,7 @@ class ToolExecutor:
         - CPU alternatives must match motherboard socket
         - PSU alternatives must have sufficient wattage
         """
-        from app.services.pc_assembly_engine import PCAssemblyEngine, PCBuild, BuildComponent
+        from app.services.pc_assembly_engine import PCAssemblyEngine, BuildResult, BuildComponent
 
         # Normalize component type
         component_type_map = {
@@ -293,31 +293,31 @@ class ToolExecutor:
         if not current_build_data or not current_build_data.get("build"):
             return {"error": "Сначала нужно собрать ПК"}
 
-        # Reconstruct PCBuild object for compatibility checking
+        # Reconstruct BuildResult object for compatibility checking
         engine = PCAssemblyEngine(self.session)
 
-        # Create a mock PCBuild from stored data
+        # Create a BuildResult from stored data
         build_dict = current_build_data.get("build", {})
 
-        # Create PCBuild with parsed specs
-        pc_build = PCBuild()
+        # Create BuildResult with parsed specs
+        build_result = BuildResult(success=True)
         for comp_type, comp_data in build_dict.items():
             if comp_data:
-                # Parse specs based on component type
+                # Parse specs based on component type using extractor
                 if comp_type == "cpu":
-                    specs = engine.parser.parse_cpu(comp_data.get("name", ""))
+                    specs = engine.extractor.extract_cpu_specs(comp_data.get("name", ""))
                 elif comp_type == "motherboard":
-                    specs = engine.parser.parse_motherboard(comp_data.get("name", ""))
+                    specs = engine.extractor.extract_motherboard_specs(comp_data.get("name", ""))
                 elif comp_type == "ram":
-                    specs = engine.parser.parse_ram(comp_data.get("name", ""))
+                    specs = engine.extractor.extract_ram_specs(comp_data.get("name", ""))
                 elif comp_type == "gpu":
-                    specs = engine.parser.parse_gpu(comp_data.get("name", ""))
+                    specs = engine.extractor.extract_gpu_specs(comp_data.get("name", ""))
                 elif comp_type == "psu":
-                    specs = engine.parser.parse_psu(comp_data.get("name", ""))
+                    specs = engine.extractor.extract_psu_specs(comp_data.get("name", ""))
                 else:
                     specs = None
 
-                setattr(pc_build, comp_type, BuildComponent(
+                setattr(build_result, comp_type, BuildComponent(
                     product_id=comp_data.get("id", 0),
                     name=comp_data.get("name", ""),
                     price=comp_data.get("price", 0),
@@ -327,10 +327,10 @@ class ToolExecutor:
                 ))
 
         # Get compatible alternatives
-        alternatives = await engine.get_compatible_alternatives(
-            current_build=pc_build,
+        alternatives = await engine.get_alternatives(
+            current_build=build_result,
             component_type=component_type,
-            budget=budget,
+            max_price=budget,
             preference=preference,
         )
 
@@ -445,43 +445,40 @@ class ToolExecutor:
     # ===== Peripherals =====
 
     async def _tool_add_peripheral(self, params: dict, session_id: str) -> dict:
-        """Add peripheral to build."""
+        """Add peripheral to build using PCAssemblyEngine."""
+        from app.services.pc_assembly_engine import PCAssemblyEngine
+
         peripheral_type_raw = params.get("peripheral_type", "mouse")
         peripheral_type = normalize_peripheral_type(peripheral_type_raw)
         budget = params.get("budget")
 
         logger.info(f"[PERIPHERAL] '{peripheral_type_raw}' -> '{peripheral_type}'")
 
-        categories = {
-            "monitor": ("Мониторы", ["Мониторы"]),
-            "mouse": ("Мыши", ["Мыши"]),
-            "keyboard": ("Клавиатуры", ["Клавиатуры"]),
-            "headset": ("Гарнитуры", ["Гарнитуры", "Наушники"]),
-            "mousepad": ("Коврики для мыши", ["Коврики"]),
-            "webcam": ("Веб-камеры", ["Веб-камеры"]),
-        }
-
-        category_name, keywords = categories.get(peripheral_type, ("Мыши", ["Мыши"]))
-
-        products = await self.product_repo.get_by_component_type(
-            component_type=category_name,
+        engine = PCAssemblyEngine(self.session)
+        peripherals = await engine.find_peripherals(
+            peripheral_type=peripheral_type,
             max_price=budget,
-            in_stock_only=True,
             limit=5,
-            search_keywords=keywords,
         )
 
-        if not products:
-            return {"error": f"{category_name} не найдены в наличии"}
-
-        products_data = [ProductSchema.model_validate(p).model_dump() for p in products]
+        if not peripherals:
+            peripheral_names = {
+                "monitor": "Мониторы",
+                "mouse": "Мыши",
+                "keyboard": "Клавиатуры",
+                "headset": "Гарнитуры",
+                "mousepad": "Коврики для мыши",
+                "webcam": "Веб-камеры",
+            }
+            name = peripheral_names.get(peripheral_type, peripheral_type)
+            return {"error": f"{name} не найдены в наличии"}
 
         await self._update_context(session_id, {
-            "last_peripherals": products_data,
+            "last_peripherals": peripherals,
             "last_peripheral_type": peripheral_type,
         })
 
-        return {"peripherals": products_data, "peripheral_type": peripheral_type}
+        return {"peripherals": peripherals, "peripheral_type": peripheral_type}
 
     # ===== Build Display =====
 

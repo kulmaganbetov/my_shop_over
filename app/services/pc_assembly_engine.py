@@ -1,425 +1,126 @@
-"""PC Assembly Engine - Zero-hallucination PC builder.
+"""PC Assembly Engine - Smart PC builder with backtracking.
 
 This module implements deterministic PC assembly with:
 1. Chain of Constraints - step-by-step compatible selection
-2. Tier System - prevents mismatched component levels
+2. Backtracking - if a component fails, try alternative paths
 3. Budget Balancer - smart allocation based on purpose
-4. Swap & Validation - cascade compatibility checks
+4. Database-driven compatibility - uses repository JSONB queries
 """
 
 import logging
-import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
-from sqlalchemy import and_, or_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product
-from app.schemas.common import ProductSchema
+from app.db.repositories.product import ProductRepository
+from app.services.specs_extractor import (
+    SpecsExtractor, Socket, RAMType, Tier, FormFactor,
+    CPUSpecs, MotherboardSpecs, RAMSpecs, GPUSpecs, PSUSpecs, StorageSpecs,
+    SOCKET_RAM_SUPPORT, CHIPSET_TIERS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# TIER SYSTEM - Component classification by performance level
-# ============================================================================
-
-class Tier(str, Enum):
-    """Component performance tiers."""
-    BUDGET = "budget"      # Entry level
-    MID = "mid"           # Mid-range
-    HIGH = "high"         # High-end
-    ENTHUSIAST = "enthusiast"  # Top tier
-
-
-class Socket(str, Enum):
-    """CPU Sockets."""
-    AM5 = "AM5"
-    AM4 = "AM4"
-    LGA1700 = "LGA1700"
-    LGA1200 = "LGA1200"
-    LGA1151 = "LGA1151"
-
-
-class RAMType(str, Enum):
-    """RAM Types."""
-    DDR5 = "DDR5"
-    DDR4 = "DDR4"
-
-
-class FormFactor(str, Enum):
-    """Motherboard form factors."""
-    ATX = "ATX"
-    MATX = "mATX"
-    ITX = "ITX"
-
-
-# Chipset tier mapping
-CHIPSET_TIERS = {
-    # Intel - High
-    "Z790": Tier.HIGH, "Z690": Tier.HIGH,
-    # Intel - Mid
-    "B760": Tier.MID, "B660": Tier.MID, "H770": Tier.MID, "H670": Tier.MID,
-    # Intel - Budget
-    "H610": Tier.BUDGET, "H510": Tier.BUDGET, "B560": Tier.BUDGET,
-    # AMD AM5 - High
-    "X670E": Tier.ENTHUSIAST, "X670": Tier.HIGH,
-    # AMD AM5 - Mid/Budget
-    "B650E": Tier.HIGH, "B650": Tier.MID, "A620": Tier.BUDGET,
-    # AMD AM4 - High
-    "X570": Tier.HIGH,
-    # AMD AM4 - Mid
-    "B550": Tier.MID, "X470": Tier.MID,
-    # AMD AM4 - Budget
-    "B450": Tier.BUDGET, "A520": Tier.BUDGET, "A320": Tier.BUDGET,
-}
-
-# Chipset to socket mapping
-CHIPSET_SOCKET_MAP = {
-    # Intel LGA1700
-    "Z790": Socket.LGA1700, "B760": Socket.LGA1700, "H770": Socket.LGA1700,
-    "H610": Socket.LGA1700, "Z690": Socket.LGA1700, "B660": Socket.LGA1700,
-    "H670": Socket.LGA1700,
-    # Intel LGA1200
-    "Z590": Socket.LGA1200, "B560": Socket.LGA1200, "H570": Socket.LGA1200,
-    "H510": Socket.LGA1200, "Z490": Socket.LGA1200, "B460": Socket.LGA1200,
-    # AMD AM5
-    "X670E": Socket.AM5, "X670": Socket.AM5, "B650E": Socket.AM5,
-    "B650": Socket.AM5, "A620": Socket.AM5,
-    # AMD AM4
-    "X570": Socket.AM4, "B550": Socket.AM4, "A520": Socket.AM4,
-    "X470": Socket.AM4, "B450": Socket.AM4, "A320": Socket.AM4,
-}
-
-# Chipset to RAM type mapping
-CHIPSET_RAM_MAP = {
-    # DDR5 only
-    "Z790": RAMType.DDR5, "H770": RAMType.DDR5, "X670E": RAMType.DDR5,
-    "X670": RAMType.DDR5, "B650E": RAMType.DDR5, "B650": RAMType.DDR5,
-    "A620": RAMType.DDR5,
-    # DDR4/DDR5 (depends on board variant)
-    "B760": None, "H610": None, "Z690": None, "B660": None, "H670": None,
-    # DDR4 only
-    "Z590": RAMType.DDR4, "B560": RAMType.DDR4, "H570": RAMType.DDR4,
-    "H510": RAMType.DDR4, "Z490": RAMType.DDR4, "B460": RAMType.DDR4,
-    "X570": RAMType.DDR4, "B550": RAMType.DDR4, "A520": RAMType.DDR4,
-    "X470": RAMType.DDR4, "B450": RAMType.DDR4, "A320": RAMType.DDR4,
-}
-
-# CPU tier by model patterns
-CPU_TIER_PATTERNS = {
-    Tier.ENTHUSIAST: [
-        r"i9-1[234]\d{3}", r"ryzen\s*9\s*(7|9)\d{3}",
-    ],
-    Tier.HIGH: [
-        r"i7-1[234]\d{3}", r"ryzen\s*7\s*(5|7|9)\d{3}",
-        r"i9-1[01]\d{3}",
-    ],
-    Tier.MID: [
-        r"i5-1[234]\d{3}", r"ryzen\s*5\s*(5|7)\d{3}",
-        r"i7-1[01]\d{3}",
-    ],
-    Tier.BUDGET: [
-        r"i3-1[234]\d{3}", r"ryzen\s*[35]\s*(3|4|5)\d{3}",
-        r"i5-1[01]\d{3}", r"pentium", r"celeron", r"athlon",
-    ],
-}
-
-# GPU tier by model patterns
-GPU_TIER_PATTERNS = {
-    Tier.ENTHUSIAST: [
-        r"rtx\s*4090", r"rtx\s*4080", r"rx\s*7900\s*xtx",
-    ],
-    Tier.HIGH: [
-        r"rtx\s*4070\s*ti", r"rtx\s*4070", r"rtx\s*3080", r"rtx\s*3090",
-        r"rx\s*7900\s*xt", r"rx\s*7800\s*xt", r"rx\s*6800\s*xt",
-    ],
-    Tier.MID: [
-        r"rtx\s*4060\s*ti", r"rtx\s*4060", r"rtx\s*3070", r"rtx\s*3060\s*ti",
-        r"rx\s*7700\s*xt", r"rx\s*7600", r"rx\s*6700\s*xt", r"rx\s*6600\s*xt",
-    ],
-    Tier.BUDGET: [
-        r"rtx\s*3060\b", r"rtx\s*3050", r"gtx\s*1660", r"gtx\s*1650",
-        r"rx\s*6600\b", r"rx\s*6500", r"rx\s*6400",
-        r"arc\s*a7", r"arc\s*a5", r"arc\s*a3",
-    ],
-}
-
-# GPU TDP reference (watts)
-GPU_TDP_MAP = {
-    # NVIDIA RTX 40
-    "4090": 450, "4080 super": 320, "4080": 320, "4070 ti super": 285,
-    "4070 ti": 285, "4070 super": 220, "4070": 200, "4060 ti": 160, "4060": 115,
-    # NVIDIA RTX 30
-    "3090 ti": 450, "3090": 350, "3080 ti": 350, "3080": 320,
-    "3070 ti": 290, "3070": 220, "3060 ti": 200, "3060": 170, "3050": 130,
-    # AMD RX 7000
-    "7900 xtx": 355, "7900 xt": 300, "7900 gre": 260,
-    "7800 xt": 263, "7700 xt": 245, "7600 xt": 190, "7600": 165,
-    # AMD RX 6000
-    "6950 xt": 335, "6900 xt": 300, "6800 xt": 300, "6800": 250,
-    "6750 xt": 250, "6700 xt": 230, "6650 xt": 180, "6600 xt": 160, "6600": 132,
-}
-
-
-# ============================================================================
-# SPECS EXTRACTION - Parse component details from product names
+# DATA CLASSES
 # ============================================================================
 
 @dataclass
-class CPUSpecs:
-    """Extracted CPU specifications."""
-    socket: Optional[Socket] = None
-    tier: Tier = Tier.MID
-    brand: Optional[str] = None
-    model: Optional[str] = None
-    tdp: int = 65
-    is_oem: bool = False
+class BuildComponent:
+    """A component in a PC build."""
+    product_id: int
+    name: str
+    price: int
+    discount_price: int
+    specs: Any  # CPUSpecs, MotherboardSpecs, etc.
+    component_type: str
+
+    def effective_price(self) -> int:
+        return self.discount_price if self.discount_price else self.price
 
 
 @dataclass
-class MotherboardSpecs:
-    """Extracted motherboard specifications."""
-    socket: Optional[Socket] = None
-    chipset: Optional[str] = None
-    ram_type: Optional[RAMType] = None
-    tier: Tier = Tier.MID
-    form_factor: FormFactor = FormFactor.ATX
+class CompatibilityIssue:
+    """Compatibility warning or error."""
+    severity: str  # "warning" or "error"
+    component_a: str
+    component_b: str
+    message: str
 
 
 @dataclass
-class RAMSpecs:
-    """Extracted RAM specifications."""
-    ram_type: Optional[RAMType] = None
-    frequency: int = 3200
-    size_gb: int = 16
-    modules: int = 1
+class BuildResult:
+    """Result of a PC build attempt."""
+    success: bool
+    cpu: Optional[BuildComponent] = None
+    motherboard: Optional[BuildComponent] = None
+    ram: Optional[BuildComponent] = None
+    gpu: Optional[BuildComponent] = None
+    psu: Optional[BuildComponent] = None
+    storage: Optional[BuildComponent] = None
+    case: Optional[BuildComponent] = None
+    cooler: Optional[BuildComponent] = None
+    peripherals: Dict[str, BuildComponent] = field(default_factory=dict)
 
+    issues: List[CompatibilityIssue] = field(default_factory=list)
+    error_message: Optional[str] = None
+    reasoning: List[str] = field(default_factory=list)  # Chain-of-thought log
 
-@dataclass
-class GPUSpecs:
-    """Extracted GPU specifications."""
-    brand: Optional[str] = None
-    model: Optional[str] = None
-    tier: Tier = Tier.MID
-    vram_gb: int = 8
-    tdp: int = 200
-    length_mm: int = 300
+    def total_price(self) -> int:
+        """Calculate total build price."""
+        total = 0
+        for comp in [self.cpu, self.motherboard, self.ram, self.gpu,
+                     self.psu, self.storage, self.case, self.cooler]:
+            if comp:
+                total += comp.effective_price()
+        for p in self.peripherals.values():
+            if p:
+                total += p.effective_price()
+        return total
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert build to dictionary for API response."""
+        build_dict = {}
+        for comp_type in ["cpu", "motherboard", "ram", "gpu", "psu", "storage", "case", "cooler"]:
+            comp = getattr(self, comp_type)
+            if comp:
+                build_dict[comp_type] = {
+                    "id": comp.product_id,
+                    "name": comp.name,
+                    "price": comp.price,
+                    "discount_price": comp.discount_price,
+                    "specs": comp.specs.to_dict() if comp.specs and hasattr(comp.specs, 'to_dict') else {},
+                }
 
-@dataclass
-class PSUSpecs:
-    """Extracted PSU specifications."""
-    wattage: int = 500
-    efficiency: Optional[str] = None
-    tier: Tier = Tier.MID
+        return {
+            "success": self.success,
+            "build": build_dict,
+            "peripherals": {
+                ptype: {
+                    "id": p.product_id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                }
+                for ptype, p in self.peripherals.items()
+            },
+            "total_price": self.total_price(),
+            "warnings": [
+                {"component": i.component_a, "message": i.message}
+                for i in self.issues if i.severity == "warning"
+            ],
+            "errors": [
+                {"component": i.component_a, "message": i.message}
+                for i in self.issues if i.severity == "error"
+            ],
+            "error_message": self.error_message,
+            "reasoning": self.reasoning,
+        }
 
-
-@dataclass
-class CaseSpecs:
-    """Extracted case specifications."""
-    form_factor: FormFactor = FormFactor.ATX
-    max_gpu_length: int = 350
-    max_cooler_height: int = 160
-
-
-class SpecsParser:
-    """Parse component specifications from product names."""
-
-    # CPU socket patterns
-    CPU_SOCKET_PATTERNS = {
-        Socket.AM5: [r"ryzen\s*(9|7|5)\s*(9|8|7)\d{3}", r"\bam5\b"],
-        Socket.AM4: [r"ryzen\s*(9|7|5|3)\s*(5|4|3|2|1)\d{3}", r"\bam4\b"],
-        Socket.LGA1700: [r"i[3579]-1[234]\d{3}", r"\blga\s*1700\b", r"-1[234]\d00"],
-        Socket.LGA1200: [r"i[3579]-1[01]\d{3}", r"\blga\s*1200\b"],
-        Socket.LGA1151: [r"i[3579]-[89]\d{3}", r"\blga\s*1151\b"],
-    }
-
-    def parse_cpu(self, name: str, specs: dict = None) -> CPUSpecs:
-        """Extract CPU specs from product name."""
-        result = CPUSpecs()
-        name_lower = name.lower()
-        specs = specs or {}
-
-        # Brand detection
-        if "amd" in name_lower or "ryzen" in name_lower:
-            result.brand = "AMD"
-        elif "intel" in name_lower or "core" in name_lower:
-            result.brand = "Intel"
-
-        # Socket detection
-        for socket, patterns in self.CPU_SOCKET_PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, name_lower):
-                    result.socket = socket
-                    break
-            if result.socket:
-                break
-
-        # OEM detection
-        result.is_oem = "oem" in name_lower or "tray" in name_lower
-
-        # Tier detection
-        for tier, patterns in CPU_TIER_PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, name_lower):
-                    result.tier = tier
-                    break
-
-        # TDP estimation
-        if result.tier == Tier.ENTHUSIAST:
-            result.tdp = 125
-        elif result.tier == Tier.HIGH:
-            result.tdp = 105
-        elif result.tier == Tier.MID:
-            result.tdp = 65
-        else:
-            result.tdp = 65
-
-        # Extract model
-        model_match = re.search(r"(i[3579]-\d{4,5}\w*|ryzen\s*[3579]\s*\d{4}\w*)", name_lower)
-        if model_match:
-            result.model = model_match.group(1)
-
-        return result
-
-    def parse_motherboard(self, name: str, specs: dict = None) -> MotherboardSpecs:
-        """Extract motherboard specs from product name."""
-        result = MotherboardSpecs()
-        name_upper = name.upper()
-        name_lower = name.lower()
-
-        # Chipset detection
-        for chipset in CHIPSET_SOCKET_MAP.keys():
-            if chipset in name_upper:
-                result.chipset = chipset
-                result.socket = CHIPSET_SOCKET_MAP[chipset]
-                result.tier = CHIPSET_TIERS.get(chipset, Tier.MID)
-                break
-
-        # RAM type detection
-        if result.chipset:
-            result.ram_type = CHIPSET_RAM_MAP.get(result.chipset)
-
-        # If chipset supports both DDR4/DDR5, check name
-        if result.ram_type is None:
-            if "DDR5" in name_upper or "D5" in name_upper:
-                result.ram_type = RAMType.DDR5
-            elif "DDR4" in name_upper or "D4" in name_upper:
-                result.ram_type = RAMType.DDR4
-
-        # Fallback RAM type from socket
-        if result.ram_type is None and result.socket:
-            if result.socket == Socket.AM5:
-                result.ram_type = RAMType.DDR5
-            else:
-                result.ram_type = RAMType.DDR4
-
-        # Form factor detection
-        if "mini-itx" in name_lower or "itx" in name_lower:
-            result.form_factor = FormFactor.ITX
-        elif "micro" in name_lower or "matx" in name_lower or "m-atx" in name_lower:
-            result.form_factor = FormFactor.MATX
-        else:
-            result.form_factor = FormFactor.ATX
-
-        return result
-
-    def parse_ram(self, name: str, specs: dict = None) -> RAMSpecs:
-        """Extract RAM specs from product name."""
-        result = RAMSpecs()
-        name_upper = name.upper()
-        name_lower = name.lower()
-
-        # Type detection
-        if "DDR5" in name_upper:
-            result.ram_type = RAMType.DDR5
-        elif "DDR4" in name_upper:
-            result.ram_type = RAMType.DDR4
-
-        # Frequency detection
-        freq_match = re.search(r"(\d{4,5})\s*(?:mhz|мгц)?", name_upper)
-        if freq_match:
-            result.frequency = int(freq_match.group(1))
-
-        # Size detection
-        size_match = re.search(r"(\d+)\s*(?:gb|гб)", name_lower)
-        if size_match:
-            result.size_gb = int(size_match.group(1))
-
-        # Module count (2x8GB = 2 modules)
-        kit_match = re.search(r"(\d)\s*x\s*\d+\s*(?:gb|гб)", name_lower)
-        if kit_match:
-            result.modules = int(kit_match.group(1))
-
-        return result
-
-    def parse_gpu(self, name: str, specs: dict = None) -> GPUSpecs:
-        """Extract GPU specs from product name."""
-        result = GPUSpecs()
-        name_lower = name.lower()
-
-        # Brand detection
-        if "nvidia" in name_lower or "rtx" in name_lower or "gtx" in name_lower:
-            result.brand = "NVIDIA"
-        elif "amd" in name_lower or "radeon" in name_lower or "rx" in name_lower:
-            result.brand = "AMD"
-        elif "intel" in name_lower or "arc" in name_lower:
-            result.brand = "Intel"
-
-        # VRAM detection
-        vram_match = re.search(r"(\d+)\s*(?:gb|гб)", name_lower)
-        if vram_match:
-            result.vram_gb = int(vram_match.group(1))
-
-        # Model and TDP detection
-        for model, tdp in GPU_TDP_MAP.items():
-            if model in name_lower:
-                result.model = model
-                result.tdp = tdp
-                break
-
-        # Tier detection
-        for tier, patterns in GPU_TIER_PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, name_lower):
-                    result.tier = tier
-                    break
-
-        return result
-
-    def parse_psu(self, name: str, specs: dict = None) -> PSUSpecs:
-        """Extract PSU specs from product name."""
-        result = PSUSpecs()
-        name_upper = name.upper()
-
-        # Wattage detection
-        watt_match = re.search(r"(\d{3,4})\s*(?:W|ВТ)?", name_upper)
-        if watt_match:
-            result.wattage = int(watt_match.group(1))
-
-        # Efficiency detection
-        if "PLATINUM" in name_upper:
-            result.efficiency = "80+ Platinum"
-            result.tier = Tier.HIGH
-        elif "GOLD" in name_upper:
-            result.efficiency = "80+ Gold"
-            result.tier = Tier.MID
-        elif "BRONZE" in name_upper:
-            result.efficiency = "80+ Bronze"
-            result.tier = Tier.BUDGET
-        elif "80+" in name_upper:
-            result.efficiency = "80+"
-            result.tier = Tier.BUDGET
-
-        return result
-
-
-# ============================================================================
-# BUDGET BALANCER - Smart budget allocation
-# ============================================================================
 
 @dataclass
 class BudgetAllocation:
@@ -440,1147 +141,672 @@ class BudgetAllocation:
         ])
 
 
+# ============================================================================
+# BUDGET BALANCER
+# ============================================================================
+
 class BudgetBalancer:
     """Smart budget allocation based on purpose and total budget."""
 
     # Budget allocation percentages by purpose
     ALLOCATION_PROFILES = {
         "gaming": {
-            "cpu": 0.18, "motherboard": 0.10, "ram": 0.12,
-            "gpu": 0.38, "psu": 0.07, "case": 0.05, "storage": 0.08, "cooler": 0.02,
+            "cpu": 0.17, "motherboard": 0.10, "ram": 0.12,
+            "gpu": 0.38, "psu": 0.07, "case": 0.06, "storage": 0.08, "cooler": 0.02,
         },
         "work": {
-            "cpu": 0.28, "motherboard": 0.12, "ram": 0.15,
-            "gpu": 0.15, "psu": 0.08, "case": 0.07, "storage": 0.12, "cooler": 0.03,
+            "cpu": 0.28, "motherboard": 0.12, "ram": 0.18,
+            "gpu": 0.12, "psu": 0.08, "case": 0.07, "storage": 0.12, "cooler": 0.03,
         },
         "office": {
             "cpu": 0.22, "motherboard": 0.15, "ram": 0.15,
-            "gpu": 0.10, "psu": 0.10, "case": 0.10, "storage": 0.15, "cooler": 0.03,
+            "gpu": 0.08, "psu": 0.10, "case": 0.12, "storage": 0.15, "cooler": 0.03,
         },
         "streaming": {
-            "cpu": 0.25, "motherboard": 0.10, "ram": 0.12,
-            "gpu": 0.35, "psu": 0.06, "case": 0.04, "storage": 0.06, "cooler": 0.02,
+            "cpu": 0.25, "motherboard": 0.10, "ram": 0.14,
+            "gpu": 0.33, "psu": 0.06, "case": 0.05, "storage": 0.05, "cooler": 0.02,
         },
     }
 
-    # Maximum allocation percentages for low budgets
-    LOW_BUDGET_CAPS = {
-        "cpu": 0.25,
-        "gpu": 0.40,
-        "motherboard": 0.15,
+    # Budget thresholds for tier selection
+    BUDGET_TIERS = {
+        (0, 300000): Tier.BUDGET,
+        (300000, 500000): Tier.MID,
+        (500000, 800000): Tier.HIGH,
+        (800000, float('inf')): Tier.ENTHUSIAST,
     }
 
-    LOW_BUDGET_THRESHOLD = 300000  # тенге
+    def get_tier_for_budget(self, budget: int) -> Tier:
+        """Determine appropriate tier for budget."""
+        for (low, high), tier in self.BUDGET_TIERS.items():
+            if low <= budget < high:
+                return tier
+        return Tier.MID
 
     def allocate(self, total_budget: int, purpose: str = "gaming") -> BudgetAllocation:
         """Allocate budget across components."""
         profile = self.ALLOCATION_PROFILES.get(purpose, self.ALLOCATION_PROFILES["gaming"])
+        tier = self.get_tier_for_budget(total_budget)
 
-        # Apply low budget caps
-        if total_budget < self.LOW_BUDGET_THRESHOLD:
-            for comp, cap in self.LOW_BUDGET_CAPS.items():
-                if profile.get(comp, 0) > cap:
-                    profile[comp] = cap
+        # Adjust profile for budget tier
+        adjusted = profile.copy()
+        if tier == Tier.BUDGET:
+            # For budget builds, reduce GPU allocation, increase essentials
+            adjusted["gpu"] = min(adjusted["gpu"], 0.30)
+            adjusted["motherboard"] = max(adjusted["motherboard"], 0.12)
+        elif tier == Tier.ENTHUSIAST:
+            # For enthusiast, can afford premium GPU
+            adjusted["gpu"] = min(adjusted["gpu"] + 0.05, 0.45)
 
         return BudgetAllocation(
-            cpu=int(total_budget * profile["cpu"]),
-            motherboard=int(total_budget * profile["motherboard"]),
-            ram=int(total_budget * profile["ram"]),
-            gpu=int(total_budget * profile["gpu"]),
-            psu=int(total_budget * profile["psu"]),
-            case=int(total_budget * profile["case"]),
-            storage=int(total_budget * profile["storage"]),
-            cooler=int(total_budget * profile["cooler"]),
+            cpu=int(total_budget * adjusted["cpu"]),
+            motherboard=int(total_budget * adjusted["motherboard"]),
+            ram=int(total_budget * adjusted["ram"]),
+            gpu=int(total_budget * adjusted["gpu"]),
+            psu=int(total_budget * adjusted["psu"]),
+            case=int(total_budget * adjusted["case"]),
+            storage=int(total_budget * adjusted["storage"]),
+            cooler=int(total_budget * adjusted["cooler"]),
         )
 
-    def validate_tier_match(self, cpu_tier: Tier, mb_tier: Tier) -> Tuple[bool, str]:
-        """Validate that CPU and motherboard tiers are compatible.
-
-        Rules:
-        - Enthusiast CPU requires High/Enthusiast motherboard
-        - High CPU requires Mid+ motherboard
-        - Budget motherboard shouldn't have High+ CPU
-        """
-        tier_order = [Tier.BUDGET, Tier.MID, Tier.HIGH, Tier.ENTHUSIAST]
-        cpu_idx = tier_order.index(cpu_tier)
-        mb_idx = tier_order.index(mb_tier)
-
-        # Enthusiast CPU needs at least High motherboard
-        if cpu_tier == Tier.ENTHUSIAST and mb_tier in [Tier.BUDGET, Tier.MID]:
-            return False, f"Процессор уровня {cpu_tier.value} требует материнскую плату уровня High или выше"
-
-        # High CPU needs at least Mid motherboard
-        if cpu_tier == Tier.HIGH and mb_tier == Tier.BUDGET:
-            return False, f"Процессор уровня {cpu_tier.value} требует материнскую плату уровня Mid или выше"
-
-        # Warn about mismatch (budget MB with high CPU)
-        if cpu_idx - mb_idx > 1:
-            return True, f"Предупреждение: материнская плата ({mb_tier.value}) может ограничивать производительность CPU ({cpu_tier.value})"
-
-        return True, ""
-
 
 # ============================================================================
-# COMPATIBILITY ENGINE - Chain of Constraints
-# ============================================================================
-
-@dataclass
-class CompatibilityIssue:
-    """Compatibility issue description."""
-    severity: str  # "error" or "warning"
-    component_a: str
-    component_b: str
-    message: str
-
-
-@dataclass
-class BuildComponent:
-    """Component in a PC build."""
-    product_id: int
-    name: str
-    price: int
-    discount_price: int
-    specs: Any
-    component_type: str
-
-
-@dataclass
-class PCBuild:
-    """Complete PC build."""
-    cpu: Optional[BuildComponent] = None
-    motherboard: Optional[BuildComponent] = None
-    ram: Optional[BuildComponent] = None
-    gpu: Optional[BuildComponent] = None
-    psu: Optional[BuildComponent] = None
-    case: Optional[BuildComponent] = None
-    storage: Optional[BuildComponent] = None
-    cooler: Optional[BuildComponent] = None
-
-    compatibility_issues: List[CompatibilityIssue] = field(default_factory=list)
-
-    def total_price(self) -> int:
-        """Calculate total build price."""
-        total = 0
-        for comp in [self.cpu, self.motherboard, self.ram, self.gpu,
-                     self.psu, self.case, self.storage, self.cooler]:
-            if comp:
-                total += comp.discount_price or comp.price
-        return total
-
-    def is_valid(self) -> bool:
-        """Check if build has no critical errors."""
-        return not any(issue.severity == "error" for issue in self.compatibility_issues)
-
-    def to_dict(self) -> dict:
-        """Convert build to dictionary for API response."""
-        build_dict = {}
-        for comp_type in ["cpu", "motherboard", "ram", "gpu", "psu", "case", "storage", "cooler"]:
-            comp = getattr(self, comp_type)
-            if comp:
-                build_dict[comp_type] = {
-                    "id": comp.product_id,
-                    "name": comp.name,
-                    "price": comp.price,
-                    "discount_price": comp.discount_price,
-                }
-
-        return {
-            "build": build_dict,
-            "total_price": self.total_price(),
-            "warnings": [
-                {"component": i.component_a, "message": i.message}
-                for i in self.compatibility_issues if i.severity == "warning"
-            ],
-            "errors": [
-                {"component": i.component_a, "message": i.message}
-                for i in self.compatibility_issues if i.severity == "error"
-            ],
-        }
-
-
-class CompatibilityEngine:
-    """Validate component compatibility."""
-
-    def __init__(self):
-        self.parser = SpecsParser()
-
-    def check_cpu_motherboard(self, cpu: CPUSpecs, mb: MotherboardSpecs) -> List[CompatibilityIssue]:
-        """Check CPU and motherboard compatibility."""
-        issues = []
-
-        # Socket must match
-        if cpu.socket and mb.socket and cpu.socket != mb.socket:
-            issues.append(CompatibilityIssue(
-                severity="error",
-                component_a="CPU",
-                component_b="Motherboard",
-                message=f"Сокет CPU ({cpu.socket.value}) не совместим с материнской платой ({mb.socket.value})"
-            ))
-
-        # Tier validation
-        balancer = BudgetBalancer()
-        valid, msg = balancer.validate_tier_match(cpu.tier, mb.tier)
-        if msg:
-            issues.append(CompatibilityIssue(
-                severity="warning" if valid else "error",
-                component_a="CPU",
-                component_b="Motherboard",
-                message=msg
-            ))
-
-        return issues
-
-    def check_motherboard_ram(self, mb: MotherboardSpecs, ram: RAMSpecs) -> List[CompatibilityIssue]:
-        """Check motherboard and RAM compatibility."""
-        issues = []
-
-        if mb.ram_type and ram.ram_type and mb.ram_type != ram.ram_type:
-            issues.append(CompatibilityIssue(
-                severity="error",
-                component_a="Motherboard",
-                component_b="RAM",
-                message=f"Материнская плата поддерживает {mb.ram_type.value}, выбрана память {ram.ram_type.value}"
-            ))
-
-        return issues
-
-    def check_psu_power(self, psu: PSUSpecs, cpu: CPUSpecs, gpu: Optional[GPUSpecs]) -> List[CompatibilityIssue]:
-        """Check if PSU has enough power."""
-        issues = []
-
-        # Calculate required power: (CPU TDP + GPU TDP) * 1.25 + 100W overhead
-        cpu_tdp = cpu.tdp if cpu else 65
-        gpu_tdp = gpu.tdp if gpu else 0
-        required = int((cpu_tdp + gpu_tdp) * 1.25) + 100
-
-        if psu.wattage < required:
-            issues.append(CompatibilityIssue(
-                severity="error",
-                component_a="PSU",
-                component_b="System",
-                message=f"Мощность БП ({psu.wattage}W) недостаточна. Требуется минимум {required}W"
-            ))
-        elif psu.wattage < required * 1.1:
-            issues.append(CompatibilityIssue(
-                severity="warning",
-                component_a="PSU",
-                component_b="System",
-                message=f"Мощность БП ({psu.wattage}W) близка к минимуму. Рекомендуется {int(required * 1.2)}W"
-            ))
-
-        return issues
-
-    def validate_build(self, build: PCBuild) -> List[CompatibilityIssue]:
-        """Validate entire build compatibility."""
-        issues = []
-
-        # CPU-Motherboard
-        if build.cpu and build.motherboard:
-            issues.extend(self.check_cpu_motherboard(
-                build.cpu.specs, build.motherboard.specs
-            ))
-
-        # Motherboard-RAM
-        if build.motherboard and build.ram:
-            issues.extend(self.check_motherboard_ram(
-                build.motherboard.specs, build.ram.specs
-            ))
-
-        # PSU power
-        if build.psu:
-            issues.extend(self.check_psu_power(
-                build.psu.specs,
-                build.cpu.specs if build.cpu else None,
-                build.gpu.specs if build.gpu else None
-            ))
-
-        return issues
-
-
-# ============================================================================
-# PC ASSEMBLY ENGINE - Main build service
+# PC ASSEMBLY ENGINE
 # ============================================================================
 
 class PCAssemblyEngine:
-    """Zero-hallucination PC assembly engine.
-
-    Uses chain of constraints to build compatible PCs:
-    1. Select CPU within budget
-    2. Select Motherboard matching CPU socket
-    3. Select RAM matching motherboard type
-    4. Select GPU with remaining budget
-    5. Select PSU with enough power
-    6. Fill remaining components
-    """
+    """Smart PC assembly engine with backtracking."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.parser = SpecsParser()
-        self.compatibility = CompatibilityEngine()
+        self.repo = ProductRepository(session)
+        self.extractor = SpecsExtractor()
         self.balancer = BudgetBalancer()
 
     async def build_pc(
         self,
         budget: int,
         purpose: str = "gaming",
-    ) -> PCBuild:
-        """Build a PC within budget constraints.
+        preferences: Optional[Dict[str, str]] = None,
+    ) -> BuildResult:
+        """Build a PC within budget using chain-of-constraints with backtracking.
 
         Args:
             budget: Total budget in tenge
-            purpose: gaming, work, office, streaming
+            purpose: Build purpose (gaming, work, office, streaming)
+            preferences: Optional preferences (brand, platform, etc.)
 
         Returns:
-            PCBuild with selected components and compatibility status
+            BuildResult with components or error message
         """
-        logger.info(f"[BUILD] Starting PC build: budget={budget}, purpose={purpose}")
+        result = BuildResult(success=False)
+        preferences = preferences or {}
 
-        build = PCBuild()
+        # Determine tier for this budget
+        tier = self.balancer.get_tier_for_budget(budget)
+        result.reasoning.append(f"Бюджет {budget:,}₸ → уровень сборки: {tier.value}")
+
+        # Allocate budget
         allocation = self.balancer.allocate(budget, purpose)
+        result.reasoning.append(
+            f"Распределение: CPU {allocation.cpu:,}₸, MB {allocation.motherboard:,}₸, "
+            f"RAM {allocation.ram:,}₸, GPU {allocation.gpu:,}₸"
+        )
 
-        # Track remaining budget
+        # Try to build with preferred platform first, then backtrack
+        platforms = self._get_platform_order(preferences, tier)
+
+        for platform_socket in platforms:
+            result.reasoning.append(f"Пробуем платформу: {platform_socket}")
+
+            build_attempt = await self._try_build_platform(
+                socket=platform_socket,
+                budget=budget,
+                allocation=allocation,
+                purpose=purpose,
+                tier=tier,
+            )
+
+            if build_attempt.success:
+                return build_attempt
+
+            result.reasoning.append(f"Платформа {platform_socket} не подошла: {build_attempt.error_message}")
+
+        # All platforms failed
+        result.error_message = "Не удалось собрать ПК: нет совместимых компонентов в наличии"
+        result.reasoning.append("Все платформы исчерпаны без успешной сборки")
+        return result
+
+    def _get_platform_order(self, preferences: Dict[str, str], tier: Tier) -> List[str]:
+        """Get ordered list of platforms to try based on preferences and tier."""
+        # Default order based on tier and availability
+        if tier in [Tier.BUDGET, Tier.MID]:
+            # For budget/mid, prefer Intel LGA1700 then AMD AM4 (usually more stock)
+            order = ["LGA1700", "AM4", "AM5", "LGA1200"]
+        else:
+            # For high/enthusiast, prefer newer platforms
+            order = ["LGA1700", "AM5", "AM4", "LGA1851"]
+
+        # Move preferred platform to front
+        if "platform" in preferences:
+            pref = preferences["platform"].upper()
+            if pref in order:
+                order.remove(pref)
+                order.insert(0, pref)
+
+        if "brand" in preferences:
+            brand = preferences["brand"].lower()
+            if brand == "amd":
+                order = [p for p in order if p.startswith("AM")] + [p for p in order if not p.startswith("AM")]
+            elif brand == "intel":
+                order = [p for p in order if p.startswith("LGA")] + [p for p in order if not p.startswith("LGA")]
+
+        return order
+
+    async def _try_build_platform(
+        self,
+        socket: str,
+        budget: int,
+        allocation: BudgetAllocation,
+        purpose: str,
+        tier: Tier,
+    ) -> BuildResult:
+        """Try to build a PC on a specific platform with backtracking."""
+        result = BuildResult(success=False)
         remaining = budget
 
-        # Step 1: Select CPU
-        cpu_result = await self._select_cpu(allocation.cpu, purpose)
-        if cpu_result:
-            build.cpu = cpu_result
-            remaining -= cpu_result.discount_price or cpu_result.price
-            logger.info(f"[BUILD] CPU: {cpu_result.name} ({cpu_result.specs.socket})")
+        # Step 1: Select CPU for this socket
+        result.reasoning.append(f"[1/7] Ищем CPU для {socket}")
+        cpu_candidates = await self._find_cpus(socket, allocation.cpu, tier)
 
-            # Add cooler if OEM
-            if cpu_result.specs.is_oem:
-                cooler_budget = min(allocation.cooler + 15000, remaining)
-                cooler = await self._select_cooler(cooler_budget, cpu_result.specs)
-                if cooler:
-                    build.cooler = cooler
-                    remaining -= cooler.discount_price or cooler.price
-        else:
-            build.compatibility_issues.append(CompatibilityIssue(
-                severity="error", component_a="CPU", component_b="",
-                message="Процессор не найден в наличии в указанном бюджете"
-            ))
-            return build
+        if not cpu_candidates:
+            result.error_message = f"CPU для {socket} не найден в бюджете {allocation.cpu:,}₸"
+            return result
 
-        # Step 2: Select Motherboard (MUST match CPU socket)
-        mb_result = await self._select_motherboard(
-            min(allocation.motherboard, remaining),
-            build.cpu.specs.socket,
-            build.cpu.specs.tier
-        )
-        if mb_result:
-            build.motherboard = mb_result
-            remaining -= mb_result.discount_price or mb_result.price
-            logger.info(f"[BUILD] MB: {mb_result.name} ({mb_result.specs.ram_type})")
-        else:
-            build.compatibility_issues.append(CompatibilityIssue(
-                severity="error", component_a="Motherboard", component_b="CPU",
-                message=f"Материнская плата под сокет {build.cpu.specs.socket.value} не найдена в наличии"
-            ))
-            return build
+        # Try each CPU candidate with backtracking
+        for cpu_product, cpu_specs in cpu_candidates:
+            cpu_component = BuildComponent(
+                product_id=cpu_product.id,
+                name=cpu_product.name,
+                price=cpu_product.price or 0,
+                discount_price=cpu_product.discount_price or 0,
+                specs=cpu_specs,
+                component_type="cpu",
+            )
+            result.cpu = cpu_component
+            cpu_price = cpu_component.effective_price()
+            remaining = budget - cpu_price
+            result.reasoning.append(f"CPU: {cpu_product.name} ({cpu_price:,}₸)")
 
-        # Step 3: Select RAM (MUST match motherboard type)
-        ram_result = await self._select_ram(
-            min(allocation.ram, remaining),
-            build.motherboard.specs.ram_type
-        )
-        if ram_result:
-            build.ram = ram_result
-            remaining -= ram_result.discount_price or ram_result.price
-            logger.info(f"[BUILD] RAM: {ram_result.name}")
-        else:
-            build.compatibility_issues.append(CompatibilityIssue(
-                severity="error", component_a="RAM", component_b="Motherboard",
-                message=f"Память {build.motherboard.specs.ram_type.value} не найдена в наличии"
-            ))
-            return build
-
-        # Step 4: Select GPU
-        # IMPORTANT: Reserve budget for PSU, storage, case BEFORE GPU selection
-        reserved_for_essentials = allocation.psu + allocation.storage + allocation.case + 10000  # +10k buffer
-        max_gpu_budget = remaining - reserved_for_essentials
-
-        if purpose == "gaming" and max_gpu_budget > 50000:
-            # GPU gets its allocation + some extra, but NOT everything
-            gpu_budget = min(allocation.gpu + int(max_gpu_budget * 0.3), max_gpu_budget)
-            gpu_result = await self._select_gpu(gpu_budget, purpose)
-            if gpu_result:
-                build.gpu = gpu_result
-                remaining -= gpu_result.discount_price or gpu_result.price
-                logger.info(f"[BUILD] GPU: {gpu_result.name}")
-
-        # Step 5: Select PSU (based on system power requirements)
-        cpu_tdp = build.cpu.specs.tdp if build.cpu else 65
-        gpu_tdp = build.gpu.specs.tdp if build.gpu else 150
-        required_wattage = int((cpu_tdp + gpu_tdp) * 1.25) + 100
-
-        # PSU budget: use allocation or more if needed
-        psu_budget = max(allocation.psu, min(int(remaining * 0.35), 60000))
-        psu_result = await self._select_psu(psu_budget, required_wattage)
-        if psu_result:
-            build.psu = psu_result
-            remaining -= psu_result.discount_price or psu_result.price
-            logger.info(f"[BUILD] PSU: {psu_result.name}")
-
-        # Step 6: Fill remaining - Storage
-        storage_budget = max(allocation.storage, min(int(remaining * 0.5), 50000))
-        storage_result = await self._select_storage(storage_budget)
-        if storage_result:
-            build.storage = storage_result
-            remaining -= storage_result.discount_price or storage_result.price
-            logger.info(f"[BUILD] Storage: {storage_result.name}")
-
-        # Step 7: Fill remaining - Case
-        case_budget = max(allocation.case, remaining)
-        case_result = await self._select_case(case_budget)
-        if case_result:
-            build.case = case_result
-            remaining -= case_result.discount_price or case_result.price
-            logger.info(f"[BUILD] Case: {case_result.name}")
-
-        # Final validation
-        build.compatibility_issues.extend(
-            self.compatibility.validate_build(build)
-        )
-
-        logger.info(f"[BUILD] Complete: total={build.total_price()}, remaining={remaining}")
-        return build
-
-    async def _select_cpu(self, budget: int, purpose: str) -> Optional[BuildComponent]:
-        """Select CPU within budget."""
-        products = await self._query_products(
-            categories=["Процессоры"],
-            max_price=budget,
-            min_price=int(budget * 0.4),
-        )
-
-        if not products:
-            # Fallback: any CPU in budget
-            products = await self._query_products(
-                categories=["Процессоры"],
-                max_price=budget,
+            # Step 2: Find compatible motherboard
+            result.reasoning.append(f"[2/7] Ищем материнскую плату для {socket}")
+            mb_result = await self._find_motherboard(
+                socket=socket,
+                max_price=min(allocation.motherboard, int(remaining * 0.2)),
+                tier=tier,
             )
 
-        best = None
-        best_score = -1
-
-        for p in products:
-            name_lower = p.name.lower()
-
-            # Skip server CPUs
-            if "xeon" in name_lower or "epyc" in name_lower:
+            if not mb_result:
+                result.reasoning.append(f"Материнская плата для {socket} не найдена, пробуем другой CPU")
                 continue
 
-            specs = self.parser.parse_cpu(p.name)
-            if not specs.socket:
+            mb_product, mb_specs = mb_result
+            mb_component = BuildComponent(
+                product_id=mb_product.id,
+                name=mb_product.name,
+                price=mb_product.price or 0,
+                discount_price=mb_product.discount_price or 0,
+                specs=mb_specs,
+                component_type="motherboard",
+            )
+            result.motherboard = mb_component
+            mb_price = mb_component.effective_price()
+            remaining -= mb_price
+            result.reasoning.append(f"MB: {mb_product.name} ({mb_price:,}₸), RAM тип: {mb_specs.ram_type.value if mb_specs.ram_type else 'unknown'}")
+
+            # Step 3: Find compatible RAM
+            if not mb_specs.ram_type:
+                result.reasoning.append("Тип RAM не определен для материнской платы, пробуем другой CPU")
                 continue
 
-            price = p.discount_price or p.price or 0
-            score = price
+            result.reasoning.append(f"[3/7] Ищем RAM типа {mb_specs.ram_type.value}")
+            ram_result = await self._find_ram(
+                ram_type=mb_specs.ram_type.value,
+                max_price=min(int(allocation.ram * 1.5), int(remaining * 0.2)),
+                min_size_gb=16 if purpose == "gaming" else 8,
+            )
 
-            # Prefer modern sockets
-            if specs.socket in [Socket.AM5, Socket.LGA1700]:
-                score *= 1.15
-
-            # Prefer matching tier for purpose
-            if purpose == "gaming" and specs.tier in [Tier.MID, Tier.HIGH]:
-                score *= 1.1
-
-            if score > best_score:
-                best_score = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="cpu"
-                )
-
-        return best
-
-    async def _select_motherboard(
-        self,
-        budget: int,
-        socket: Socket,
-        cpu_tier: Tier
-    ) -> Optional[BuildComponent]:
-        """Select motherboard matching CPU socket."""
-        products = await self._query_products(
-            categories=["Материнские платы"],
-            max_price=budget,
-        )
-
-        best = None
-        best_score = -1
-
-        for p in products:
-            name_lower = p.name.lower()
-
-            # Skip server boards
-            if "server" in name_lower or "сервер" in name_lower:
+            if not ram_result:
+                result.reasoning.append(f"RAM {mb_specs.ram_type.value} не найдена, пробуем другой CPU")
                 continue
 
-            specs = self.parser.parse_motherboard(p.name)
+            ram_product, ram_specs = ram_result
+            ram_component = BuildComponent(
+                product_id=ram_product.id,
+                name=ram_product.name,
+                price=ram_product.price or 0,
+                discount_price=ram_product.discount_price or 0,
+                specs=ram_specs,
+                component_type="ram",
+            )
+            result.ram = ram_component
+            ram_price = ram_component.effective_price()
+            remaining -= ram_price
+            result.reasoning.append(f"RAM: {ram_product.name} ({ram_price:,}₸)")
 
-            # MUST match socket
-            if specs.socket != socket:
-                continue
+            # Step 4: GPU (if budget allows and purpose requires)
+            if purpose in ["gaming", "streaming"] and remaining > 50000:
+                result.reasoning.append("[4/7] Ищем видеокарту")
+                gpu_budget = min(allocation.gpu, int(remaining * 0.6))
+                gpu_result = await self._find_gpu(max_price=gpu_budget, purpose=purpose)
 
-            # Must have RAM type
-            if not specs.ram_type:
-                continue
-
-            price = p.discount_price or p.price or 0
-            if price > budget:
-                continue
-
-            score = price
-
-            # Prefer matching tier
-            if specs.tier == cpu_tier:
-                score *= 1.2
-            elif abs(list(Tier).index(specs.tier) - list(Tier).index(cpu_tier)) <= 1:
-                score *= 1.1
-
-            if score > best_score:
-                best_score = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="motherboard"
-                )
-
-        return best
-
-    async def _select_ram(self, budget: int, ram_type: RAMType) -> Optional[BuildComponent]:
-        """Select RAM matching motherboard type.
-
-        For gaming, STRONGLY prefer 16GB+ (8GB is inadequate for modern games).
-        Will search with extended budget (up to 1.5x) if 16GB not found initially.
-        """
-        # First search with normal budget, then try extended if no 16GB found
-        extended_budget = int(budget * 1.5)
-
-        products = await self._query_products(
-            categories=["Оперативная память"],
-            max_price=extended_budget,  # Search with extended budget
-        )
-
-        best = None
-        best_score = -1
-        best_16gb = None
-        best_16gb_price = float('inf')
-
-        for p in products:
-            name_lower = p.name.lower()
-
-            # Skip laptop RAM
-            if "so-dimm" in name_lower or "sodimm" in name_lower or "ноутбук" in name_lower:
-                continue
-
-            # Skip server RAM (ECC, RDIMM, LRDIMM, Registered)
-            if any(x in name_lower for x in ["сервер", "server", "ecc", "rdimm", "lrdimm", "registered"]):
-                continue
-
-            specs = self.parser.parse_ram(p.name)
-
-            # MUST match RAM type
-            if specs.ram_type != ram_type:
-                continue
-
-            price = p.discount_price or p.price or 0
-
-            # For 16GB+, allow up to extended budget; for 8GB only normal budget
-            if specs.size_gb >= 16:
-                if price > extended_budget:
-                    continue
-                # Track cheapest 16GB+ option
-                if price < best_16gb_price:
-                    best_16gb_price = price
-                    best_16gb = BuildComponent(
-                        product_id=p.id,
-                        name=p.name,
-                        price=p.price or 0,
-                        discount_price=p.discount_price or 0,
-                        specs=specs,
-                        component_type="ram"
+                if gpu_result:
+                    gpu_product, gpu_specs = gpu_result
+                    gpu_component = BuildComponent(
+                        product_id=gpu_product.id,
+                        name=gpu_product.name,
+                        price=gpu_product.price or 0,
+                        discount_price=gpu_product.discount_price or 0,
+                        specs=gpu_specs,
+                        component_type="gpu",
                     )
-            else:
-                # For 8GB or less, only consider if within original budget
-                if price > budget:
-                    continue
+                    result.gpu = gpu_component
+                    gpu_price = gpu_component.effective_price()
+                    remaining -= gpu_price
+                    result.reasoning.append(f"GPU: {gpu_product.name} ({gpu_price:,}₸)")
+                else:
+                    result.reasoning.append("GPU не найдена в бюджете, пропускаем")
 
-                score = price
-                # Penalize 8GB heavily
-                if specs.size_gb <= 8:
+            # Step 5: PSU with enough wattage
+            result.reasoning.append("[5/7] Ищем блок питания")
+            required_wattage = self.extractor.get_required_psu_wattage(
+                cpu_specs,
+                result.gpu.specs if result.gpu else None
+            )
+            psu_result = await self._find_psu(
+                min_wattage=required_wattage,
+                max_price=min(allocation.psu, int(remaining * 0.3)),
+            )
+
+            if psu_result:
+                psu_product, psu_specs = psu_result
+                psu_component = BuildComponent(
+                    product_id=psu_product.id,
+                    name=psu_product.name,
+                    price=psu_product.price or 0,
+                    discount_price=psu_product.discount_price or 0,
+                    specs=psu_specs,
+                    component_type="psu",
+                )
+                result.psu = psu_component
+                psu_price = psu_component.effective_price()
+                remaining -= psu_price
+                result.reasoning.append(f"PSU: {psu_product.name} ({psu_price:,}₸, {psu_specs.wattage}W)")
+            else:
+                result.reasoning.append(f"PSU {required_wattage}W не найден")
+
+            # Step 6: Storage
+            result.reasoning.append("[6/7] Ищем накопитель")
+            storage_result = await self._find_storage(
+                max_price=min(allocation.storage, int(remaining * 0.4)),
+            )
+
+            if storage_result:
+                storage_product, storage_specs = storage_result
+                storage_component = BuildComponent(
+                    product_id=storage_product.id,
+                    name=storage_product.name,
+                    price=storage_product.price or 0,
+                    discount_price=storage_product.discount_price or 0,
+                    specs=storage_specs,
+                    component_type="storage",
+                )
+                result.storage = storage_component
+                storage_price = storage_component.effective_price()
+                remaining -= storage_price
+                result.reasoning.append(f"Storage: {storage_product.name} ({storage_price:,}₸)")
+
+            # Step 7: Case and Cooler
+            result.reasoning.append("[7/7] Ищем корпус и кулер")
+            case_result = await self._find_case(max_price=min(allocation.case, int(remaining * 0.5)))
+            if case_result:
+                case_product = case_result
+                case_component = BuildComponent(
+                    product_id=case_product.id,
+                    name=case_product.name,
+                    price=case_product.price or 0,
+                    discount_price=case_product.discount_price or 0,
+                    specs=None,
+                    component_type="case",
+                )
+                result.case = case_component
+                case_price = case_component.effective_price()
+                remaining -= case_price
+                result.reasoning.append(f"Case: {case_product.name} ({case_price:,}₸)")
+
+            cooler_result = await self._find_cooler(
+                socket=socket,
+                max_price=min(allocation.cooler, remaining),
+            )
+            if cooler_result:
+                cooler_product = cooler_result
+                cooler_component = BuildComponent(
+                    product_id=cooler_product.id,
+                    name=cooler_product.name,
+                    price=cooler_product.price or 0,
+                    discount_price=cooler_product.discount_price or 0,
+                    specs=None,
+                    component_type="cooler",
+                )
+                result.cooler = cooler_component
+                cooler_price = cooler_component.effective_price()
+                remaining -= cooler_price
+                result.reasoning.append(f"Cooler: {cooler_product.name} ({cooler_price:,}₸)")
+
+            # Build succeeded
+            result.success = True
+            result.reasoning.append(f"Сборка завершена! Итого: {result.total_price():,}₸, осталось: {remaining:,}₸")
+            return result
+
+        # All CPU candidates failed
+        result.error_message = f"Не удалось собрать ПК на платформе {socket}"
+        return result
+
+    # =========================================================================
+    # COMPONENT SELECTION METHODS
+    # =========================================================================
+
+    async def _find_cpus(
+        self, socket: str, max_price: int, tier: Tier
+    ) -> List[Tuple[Product, CPUSpecs]]:
+        """Find CPU candidates for a given socket."""
+        products = await self.repo.find_cpus(
+            max_price=max_price,
+            min_price=int(max_price * 0.4),
+            limit=15,
+        )
+
+        candidates = []
+        for p in products:
+            specs = self.extractor.extract_cpu_specs(p.name, p.specifications)
+            if specs and specs.socket and specs.socket.value == socket:
+                candidates.append((p, specs))
+
+        # Sort by price descending (best value for budget)
+        candidates.sort(key=lambda x: x[0].discount_price or x[0].price or 0, reverse=True)
+        return candidates[:5]
+
+    async def _find_motherboard(
+        self, socket: str, max_price: int, tier: Tier
+    ) -> Optional[Tuple[Product, MotherboardSpecs]]:
+        """Find a compatible motherboard."""
+        products = await self.repo.find_compatible_motherboards(
+            socket=socket,
+            max_price=max_price,
+            tier=tier.value if tier == Tier.BUDGET else None,
+            limit=20,
+        )
+
+        for p in products:
+            specs = self.extractor.extract_motherboard_specs(p.name, p.specifications)
+            if specs and specs.is_complete:
+                if specs.socket and specs.socket.value == socket:
+                    return (p, specs)
+
+        return None
+
+    async def _find_ram(
+        self, ram_type: str, max_price: int, min_size_gb: int = 16
+    ) -> Optional[Tuple[Product, RAMSpecs]]:
+        """Find compatible RAM."""
+        products = await self.repo.find_compatible_ram(
+            ram_type=ram_type,
+            max_price=max_price,
+            min_size_gb=min_size_gb,
+            limit=20,
+        )
+
+        best = None
+        best_score = -1
+
+        for p in products:
+            specs = self.extractor.extract_ram_specs(p.name, p.specifications)
+            if not specs or not specs.is_complete:
+                continue
+
+            if specs.ram_type and specs.ram_type.value != ram_type:
+                continue
+
+            price = p.discount_price or p.price or 0
+            if price > max_price:
+                continue
+
+            score = price
+            if specs.size_gb:
+                if specs.size_gb >= 32:
+                    score *= 2.0
+                elif specs.size_gb >= 16:
+                    score *= 1.5
+                elif specs.size_gb <= 8:
                     score *= 0.3
 
-                # Prefer higher frequency
-                if specs.frequency >= 6000 and ram_type == RAMType.DDR5:
-                    score *= 1.15
-                elif specs.frequency >= 3600 and ram_type == RAMType.DDR4:
-                    score *= 1.15
+            if specs.frequency:
+                if ram_type == "DDR5" and specs.frequency >= 6000:
+                    score *= 1.2
+                elif ram_type == "DDR4" and specs.frequency >= 3600:
+                    score *= 1.2
 
-                if score > best_score:
-                    best_score = score
-                    best = BuildComponent(
-                        product_id=p.id,
-                        name=p.name,
-                        price=p.price or 0,
-                        discount_price=p.discount_price or 0,
-                        specs=specs,
-                        component_type="ram"
-                    )
+            if score > best_score:
+                best_score = score
+                best = (p, specs)
 
-        # ALWAYS prefer 16GB+ over 8GB, even if more expensive
-        if best_16gb:
-            logger.info(f"[RAM] Selected 16GB+: {best_16gb.name} at {best_16gb_price}")
-            return best_16gb
-
-        logger.warning(f"[RAM] No 16GB+ found for {ram_type.value}, falling back to smaller RAM")
         return best
 
-    async def _select_gpu(self, budget: int, purpose: str) -> Optional[BuildComponent]:
-        """Select GPU within budget."""
-        products = await self._query_products(
-            categories=["Видеокарты"],
-            max_price=budget,
-            min_price=int(budget * 0.3),
+    async def _find_gpu(
+        self, max_price: int, purpose: str
+    ) -> Optional[Tuple[Product, GPUSpecs]]:
+        """Find a GPU."""
+        products = await self.repo.find_gpus(
+            max_price=max_price,
+            min_price=int(max_price * 0.3),
+            limit=15,
         )
 
-        if not products:
-            products = await self._query_products(
-                categories=["Видеокарты"],
-                max_price=budget,
+        best = None
+        best_score = -1
+
+        for p in products:
+            specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
+            if not specs or not specs.is_complete:
+                continue
+
+            price = p.discount_price or p.price or 0
+            if price > max_price:
+                continue
+
+            score = price
+            if specs.vram_gb and specs.vram_gb >= 8:
+                score *= 1.2
+            if specs.vram_gb and specs.vram_gb >= 12:
+                score *= 1.3
+
+            if score > best_score:
+                best_score = score
+                best = (p, specs)
+
+        return best
+
+    async def _find_psu(
+        self, min_wattage: int, max_price: int
+    ) -> Optional[Tuple[Product, PSUSpecs]]:
+        """Find a PSU with sufficient wattage."""
+        products = await self.repo.find_psus(
+            min_wattage=min_wattage,
+            max_price=max_price,
+            limit=10,
+        )
+
+        for p in products:
+            specs = self.extractor.extract_psu_specs(p.name, p.specifications)
+            if specs and specs.is_complete and specs.wattage >= min_wattage:
+                return (p, specs)
+
+        if min_wattage > 500:
+            products = await self.repo.find_psus(
+                min_wattage=500,
+                max_price=max_price,
+                limit=10,
             )
+            for p in products:
+                specs = self.extractor.extract_psu_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    return (p, specs)
 
-        best = None
-        best_score = -1
+        return None
 
-        # Skip workstation cards for gaming
-        workstation_kw = ["quadro", "firepro", "radeon pro", "a2000", "a4000", "a5000", "a6000"]
-
-        for p in products:
-            name_lower = p.name.lower()
-
-            # Skip workstation/mining cards
-            if any(kw in name_lower for kw in workstation_kw):
-                continue
-            if "mining" in name_lower:
-                continue
-
-            specs = self.parser.parse_gpu(p.name)
-            price = p.discount_price or p.price or 0
-
-            if price > budget:
-                continue
-
-            score = price
-
-            # Prefer gaming cards
-            if any(kw in name_lower for kw in ["rtx", "rx 7", "rx 6"]):
-                score *= 1.15
-
-            if score > best_score:
-                best_score = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="gpu"
-                )
-
-        return best
-
-    async def _select_psu(self, budget: int, required_wattage: int) -> Optional[BuildComponent]:
-        """Select PSU with enough power."""
-        products = await self._query_products(
-            categories=["Блоки питания"],
-            max_price=budget,
+    async def _find_storage(
+        self, max_price: int
+    ) -> Optional[Tuple[Product, StorageSpecs]]:
+        """Find storage."""
+        products = await self.repo.find_storage(
+            max_price=max_price,
+            storage_type="SSD",
+            limit=10,
         )
 
-        best = None
-        best_score = -1
-
         for p in products:
-            specs = self.parser.parse_psu(p.name)
+            specs = self.extractor.extract_storage_specs(p.name, p.specifications)
+            if specs and specs.is_complete:
+                return (p, specs)
 
-            # Must have enough wattage
-            if specs.wattage < required_wattage:
-                continue
+        return None
 
-            price = p.discount_price or p.price or 0
-            if price > budget:
-                continue
+    async def _find_case(self, max_price: int) -> Optional[Product]:
+        """Find a case."""
+        products = await self.repo.find_cases(max_price=max_price, limit=5)
+        return products[0] if products else None
 
-            score = price
-
-            # Prefer efficiency
-            if specs.efficiency and "gold" in specs.efficiency.lower():
-                score *= 1.15
-            elif specs.efficiency and "platinum" in specs.efficiency.lower():
-                score *= 1.2
-
-            if score > best_score:
-                best_score = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=specs,
-                    component_type="psu"
-                )
-
-        return best
-
-    async def _select_storage(self, budget: int) -> Optional[BuildComponent]:
-        """Select storage within budget."""
-        products = await self._query_products(
-            categories=["Твердотельные диски (SSD)", "SSD накопители"],
-            max_price=budget,
+    async def _find_cooler(self, socket: str, max_price: int) -> Optional[Product]:
+        """Find a CPU cooler."""
+        products = await self.repo.find_coolers(
+            socket=socket,
+            max_price=max_price,
+            limit=5,
         )
+        return products[0] if products else None
 
-        best = None
-        best_price = 0
+    # =========================================================================
+    # COMPONENT REPLACEMENT
+    # =========================================================================
 
-        for p in products:
-            name_lower = p.name.lower()
-
-            # Skip external drives
-            if "внешний" in name_lower or "external" in name_lower or "portable" in name_lower:
-                continue
-
-            price = p.discount_price or p.price or 0
-            if price > budget:
-                continue
-
-            # Prefer higher capacity (by price)
-            if price > best_price:
-                best_price = price
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=None,
-                    component_type="storage"
-                )
-
-        return best
-
-    async def _select_case(self, budget: int) -> Optional[BuildComponent]:
-        """Select case within budget."""
-        products = await self._query_products(
-            categories=["Корпуса"],
-            max_price=budget,
-        )
-
-        best = None
-        best_price = 0
-
-        for p in products:
-            price = p.discount_price or p.price or 0
-            if price > budget:
-                continue
-
-            if price > best_price:
-                best_price = price
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=None,
-                    component_type="case"
-                )
-
-        return best
-
-    async def _select_cooler(self, budget: int, cpu_specs: CPUSpecs) -> Optional[BuildComponent]:
-        """Select CPU cooler."""
-        products = await self._query_products(
-            categories=["Кулеры для процессоров", "Кулеры"],
-            max_price=budget,
-        )
-
-        best = None
-        best_price = 0
-
-        # Socket keywords for filtering
-        socket_kw = []
-        if cpu_specs.socket:
-            if cpu_specs.socket in [Socket.AM4, Socket.AM5]:
-                socket_kw = ["am4", "am5", "amd"]
-            elif cpu_specs.socket == Socket.LGA1700:
-                socket_kw = ["lga1700", "lga 1700", "1700"]
-
-        for p in products:
-            name_lower = p.name.lower()
-            price = p.discount_price or p.price or 0
-
-            if price > budget:
-                continue
-
-            # Skip water cooling on low budget
-            if budget < 15000 and any(w in name_lower for w in ["водян", "liquid", "aio"]):
-                continue
-
-            score = price
-            # Bonus for socket match
-            if socket_kw and any(kw in name_lower for kw in socket_kw):
-                score *= 1.2
-
-            if score > best_price:
-                best_price = score
-                best = BuildComponent(
-                    product_id=p.id,
-                    name=p.name,
-                    price=p.price or 0,
-                    discount_price=p.discount_price or 0,
-                    specs=None,
-                    component_type="cooler"
-                )
-
-        return best
-
-    async def _query_products(
+    async def get_alternatives(
         self,
-        categories: List[str],
+        current_build: BuildResult,
+        component_type: str,
         max_price: Optional[int] = None,
-        min_price: Optional[int] = None,
-    ) -> List[Product]:
-        """Query products from database with stock > 0."""
-        # Build category conditions
-        cat_conditions = []
-        for cat in categories:
-            cat_conditions.append(Product.category == cat)
-            cat_conditions.append(Product.category.ilike(f"%{cat}%"))
-
-        conditions = [
-            or_(*cat_conditions),
-            Product.stock > 0,  # SAFETY: Always require stock
-            Product.is_active == True,
-        ]
-
-        if max_price:
-            conditions.append(
-                func.coalesce(Product.discount_price, Product.price) <= max_price
-            )
-        if min_price:
-            conditions.append(
-                func.coalesce(Product.discount_price, Product.price) >= min_price
-            )
-
-        result = await self.session.execute(
-            select(Product)
-            .where(and_(*conditions))
-            .order_by(func.coalesce(Product.discount_price, Product.price).desc())
-            .limit(100)
-        )
-
-        return list(result.scalars().all())
-
-    # ========================================================================
-    # SWAP & VALIDATION - Replace component with cascade check
-    # ========================================================================
-
-    async def validate_and_replace(
-        self,
-        current_build: PCBuild,
-        new_product_id: int,
-        component_type: str,
-    ) -> Tuple[PCBuild, List[str]]:
-        """Replace a component and validate compatibility.
-
-        Returns:
-            Tuple of (updated_build, list_of_components_to_also_replace)
-        """
-        # Fetch new product
-        result = await self.session.execute(
-            select(Product).where(Product.id == new_product_id)
-        )
-        new_product = result.scalar_one_or_none()
-
-        if not new_product:
-            return current_build, ["Товар не найден"]
-
-        if new_product.stock <= 0:
-            return current_build, ["Товар не в наличии"]
-
-        cascade_replacements = []
-
-        # Parse new component specs
-        if component_type == "cpu":
-            new_specs = self.parser.parse_cpu(new_product.name)
-            new_component = BuildComponent(
-                product_id=new_product.id,
-                name=new_product.name,
-                price=new_product.price or 0,
-                discount_price=new_product.discount_price or 0,
-                specs=new_specs,
-                component_type="cpu"
-            )
-
-            # Check if motherboard needs replacement (socket mismatch)
-            if current_build.motherboard:
-                mb_specs = current_build.motherboard.specs
-                if mb_specs.socket != new_specs.socket:
-                    cascade_replacements.append(
-                        f"Материнская плата ({mb_specs.socket.value}) несовместима с новым CPU ({new_specs.socket.value}). Нужно заменить."
-                    )
-
-            # Check if RAM needs replacement (socket → RAM type change)
-            if current_build.ram and new_specs.socket:
-                if new_specs.socket == Socket.AM5:
-                    # AM5 requires DDR5
-                    if current_build.ram.specs.ram_type != RAMType.DDR5:
-                        cascade_replacements.append(
-                            f"Новый CPU (AM5) требует DDR5 память. Текущая память несовместима."
-                        )
-
-            current_build.cpu = new_component
-
-        elif component_type == "motherboard":
-            new_specs = self.parser.parse_motherboard(new_product.name)
-            new_component = BuildComponent(
-                product_id=new_product.id,
-                name=new_product.name,
-                price=new_product.price or 0,
-                discount_price=new_product.discount_price or 0,
-                specs=new_specs,
-                component_type="motherboard"
-            )
-
-            # Check CPU compatibility
-            if current_build.cpu:
-                cpu_specs = current_build.cpu.specs
-                if cpu_specs.socket != new_specs.socket:
-                    cascade_replacements.append(
-                        f"CPU ({cpu_specs.socket.value}) несовместим с новой материнской платой ({new_specs.socket.value}). Нужно заменить CPU."
-                    )
-
-            # Check RAM compatibility
-            if current_build.ram:
-                ram_specs = current_build.ram.specs
-                if ram_specs.ram_type != new_specs.ram_type:
-                    cascade_replacements.append(
-                        f"Память ({ram_specs.ram_type.value}) несовместима с новой материнской платой ({new_specs.ram_type.value}). Нужно заменить RAM."
-                    )
-
-            current_build.motherboard = new_component
-
-        elif component_type == "ram":
-            new_specs = self.parser.parse_ram(new_product.name)
-            new_component = BuildComponent(
-                product_id=new_product.id,
-                name=new_product.name,
-                price=new_product.price or 0,
-                discount_price=new_product.discount_price or 0,
-                specs=new_specs,
-                component_type="ram"
-            )
-
-            # Check motherboard compatibility
-            if current_build.motherboard:
-                mb_specs = current_build.motherboard.specs
-                if mb_specs.ram_type != new_specs.ram_type:
-                    cascade_replacements.append(
-                        f"Материнская плата ({mb_specs.ram_type.value}) несовместима с новой памятью ({new_specs.ram_type.value}). Нужно заменить материнскую плату."
-                    )
-
-            current_build.ram = new_component
-
-        elif component_type == "gpu":
-            new_specs = self.parser.parse_gpu(new_product.name)
-            new_component = BuildComponent(
-                product_id=new_product.id,
-                name=new_product.name,
-                price=new_product.price or 0,
-                discount_price=new_product.discount_price or 0,
-                specs=new_specs,
-                component_type="gpu"
-            )
-
-            # Check PSU power
-            if current_build.psu:
-                psu_specs = current_build.psu.specs
-                cpu_tdp = current_build.cpu.specs.tdp if current_build.cpu else 65
-                required = int((cpu_tdp + new_specs.tdp) * 1.25) + 100
-
-                if psu_specs.wattage < required:
-                    cascade_replacements.append(
-                        f"Блок питания ({psu_specs.wattage}W) недостаточен для новой видеокарты. Требуется минимум {required}W."
-                    )
-
-            current_build.gpu = new_component
-
-        elif component_type == "psu":
-            new_specs = self.parser.parse_psu(new_product.name)
-            new_component = BuildComponent(
-                product_id=new_product.id,
-                name=new_product.name,
-                price=new_product.price or 0,
-                discount_price=new_product.discount_price or 0,
-                specs=new_specs,
-                component_type="psu"
-            )
-
-            # Check if enough power
-            cpu_tdp = current_build.cpu.specs.tdp if current_build.cpu else 65
-            gpu_tdp = current_build.gpu.specs.tdp if current_build.gpu else 0
-            required = int((cpu_tdp + gpu_tdp) * 1.25) + 100
-
-            if new_specs.wattage < required:
-                cascade_replacements.append(
-                    f"Новый БП ({new_specs.wattage}W) недостаточен для текущей системы. Требуется минимум {required}W."
-                )
-
-            current_build.psu = new_component
-
-        # Re-validate entire build
-        current_build.compatibility_issues = self.compatibility.validate_build(current_build)
-
-        return current_build, cascade_replacements
-
-    async def get_compatible_alternatives(
-        self,
-        current_build: PCBuild,
-        component_type: str,
-        budget: Optional[int] = None,
         preference: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get alternative components compatible with current build.
-
-        Args:
-            current_build: Current PC build
-            component_type: Component to find alternatives for
-            budget: Max budget for alternative
-            preference: "cheaper", "better", or brand name
-
-        Returns:
-            List of compatible alternatives
-        """
+        """Get alternative components compatible with current build."""
         alternatives = []
 
-        if component_type == "motherboard" and current_build.cpu:
-            # Must match CPU socket
-            socket = current_build.cpu.specs.socket
-            products = await self._query_products(
-                categories=["Материнские платы"],
-                max_price=budget,
-            )
+        if component_type == "cpu":
+            if current_build.motherboard and current_build.motherboard.specs:
+                socket = current_build.motherboard.specs.socket
+                if socket:
+                    products = await self.repo.find_cpus(max_price=max_price, limit=10)
+                    for p in products:
+                        specs = self.extractor.extract_cpu_specs(p.name, p.specifications)
+                        if specs and specs.socket == socket:
+                            alternatives.append({
+                                "id": p.id,
+                                "name": p.name,
+                                "price": p.price,
+                                "discount_price": p.discount_price,
+                                "socket": socket.value,
+                            })
 
-            for p in products:
-                specs = self.parser.parse_motherboard(p.name)
-                if specs.socket == socket:
-                    alternatives.append({
-                        "id": p.id,
-                        "name": p.name,
-                        "price": p.price,
-                        "discount_price": p.discount_price,
-                        "socket": specs.socket.value if specs.socket else None,
-                        "ram_type": specs.ram_type.value if specs.ram_type else None,
-                    })
+        elif component_type == "motherboard":
+            if current_build.cpu and current_build.cpu.specs:
+                socket = current_build.cpu.specs.socket
+                if socket:
+                    products = await self.repo.find_compatible_motherboards(
+                        socket=socket.value,
+                        max_price=max_price,
+                        limit=10,
+                    )
+                    for p in products:
+                        specs = self.extractor.extract_motherboard_specs(p.name, p.specifications)
+                        if specs and specs.is_complete:
+                            alternatives.append({
+                                "id": p.id,
+                                "name": p.name,
+                                "price": p.price,
+                                "discount_price": p.discount_price,
+                                "chipset": specs.chipset,
+                                "ram_type": specs.ram_type.value if specs.ram_type else None,
+                            })
 
-        elif component_type == "ram" and current_build.motherboard:
-            # Must match motherboard RAM type
-            ram_type = current_build.motherboard.specs.ram_type
-            products = await self._query_products(
-                categories=["Оперативная память"],
-                max_price=budget,
-            )
-
-            for p in products:
-                name_lower = p.name.lower()
-                # Skip laptop RAM
-                if "so-dimm" in name_lower or "sodimm" in name_lower:
-                    continue
-                # Skip server RAM
-                if any(x in name_lower for x in ["сервер", "server", "ecc", "rdimm", "lrdimm", "registered"]):
-                    continue
-
-                specs = self.parser.parse_ram(p.name)
-                if specs.ram_type == ram_type:
-                    alternatives.append({
-                        "id": p.id,
-                        "name": p.name,
-                        "price": p.price,
-                        "discount_price": p.discount_price,
-                        "ram_type": specs.ram_type.value if specs.ram_type else None,
-                        "size_gb": specs.size_gb,
-                    })
-
-        elif component_type == "cpu":
-            # Get CPUs, filter by motherboard socket if exists
-            required_socket = None
-            if current_build.motherboard:
-                required_socket = current_build.motherboard.specs.socket
-
-            products = await self._query_products(
-                categories=["Процессоры"],
-                max_price=budget,
-            )
-
-            for p in products:
-                name_lower = p.name.lower()
-                if "xeon" in name_lower or "epyc" in name_lower:
-                    continue
-
-                specs = self.parser.parse_cpu(p.name)
-                if required_socket and specs.socket != required_socket:
-                    continue
-
-                alternatives.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "price": p.price,
-                    "discount_price": p.discount_price,
-                    "socket": specs.socket.value if specs.socket else None,
-                    "tier": specs.tier.value,
-                })
+        elif component_type == "ram":
+            if current_build.motherboard and current_build.motherboard.specs:
+                ram_type = current_build.motherboard.specs.ram_type
+                if ram_type:
+                    products = await self.repo.find_compatible_ram(
+                        ram_type=ram_type.value,
+                        max_price=max_price,
+                        limit=10,
+                    )
+                    for p in products:
+                        specs = self.extractor.extract_ram_specs(p.name, p.specifications)
+                        if specs and specs.is_complete and specs.ram_type == ram_type:
+                            alternatives.append({
+                                "id": p.id,
+                                "name": p.name,
+                                "price": p.price,
+                                "discount_price": p.discount_price,
+                                "size_gb": specs.size_gb,
+                                "frequency": specs.frequency,
+                            })
 
         elif component_type == "gpu":
-            products = await self._query_products(
-                categories=["Видеокарты"],
-                max_price=budget,
-            )
-
+            products = await self.repo.find_gpus(max_price=max_price, limit=10)
             for p in products:
-                name_lower = p.name.lower()
-                if "quadro" in name_lower or "mining" in name_lower:
-                    continue
+                specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    alternatives.append({
+                        "id": p.id,
+                        "name": p.name,
+                        "price": p.price,
+                        "discount_price": p.discount_price,
+                        "vram_gb": specs.vram_gb,
+                    })
 
-                specs = self.parser.parse_gpu(p.name)
-                alternatives.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "price": p.price,
-                    "discount_price": p.discount_price,
-                    "vram_gb": specs.vram_gb,
-                    "tdp": specs.tdp,
-                })
+        elif component_type == "storage":
+            products = await self.repo.find_storage(max_price=max_price, limit=10)
+            for p in products:
+                specs = self.extractor.extract_storage_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    alternatives.append({
+                        "id": p.id,
+                        "name": p.name,
+                        "price": p.price,
+                        "discount_price": p.discount_price,
+                        "capacity_gb": specs.capacity_gb,
+                        "type": specs.type,
+                    })
 
         elif component_type == "psu":
-            # Calculate minimum required wattage
-            cpu_tdp = current_build.cpu.specs.tdp if current_build.cpu else 65
-            gpu_tdp = current_build.gpu.specs.tdp if current_build.gpu else 200
+            cpu_tdp = current_build.cpu.specs.tdp if current_build.cpu and current_build.cpu.specs else 65
+            gpu_tdp = current_build.gpu.specs.tdp if current_build.gpu and current_build.gpu.specs else 150
             min_wattage = int((cpu_tdp + gpu_tdp) * 1.25) + 100
 
-            products = await self._query_products(
-                categories=["Блоки питания"],
-                max_price=budget,
+            products = await self.repo.find_psus(
+                min_wattage=min_wattage,
+                max_price=max_price,
+                limit=10,
             )
-
             for p in products:
-                specs = self.parser.parse_psu(p.name)
-                if specs.wattage >= min_wattage:
+                specs = self.extractor.extract_psu_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
                     alternatives.append({
                         "id": p.id,
                         "name": p.name,
@@ -1590,48 +816,18 @@ class PCAssemblyEngine:
                         "efficiency": specs.efficiency,
                     })
 
-        elif component_type == "storage":
-            # Storage has no compatibility requirements
-            products = await self._query_products(
-                categories=["Твердотельные диски (SSD)", "SSD накопители", "SSD"],
-                max_price=budget,
-            )
-
-            for p in products:
-                name_lower = p.name.lower()
-                # Skip external drives
-                if "внешний" in name_lower or "external" in name_lower or "portable" in name_lower:
-                    continue
-                # Skip server SSDs
-                if any(x in name_lower for x in ["сервер", "server", "enterprise", "datacenter"]):
-                    continue
-
-                # Extract capacity from name
-                capacity = "N/A"
-                import re
-                cap_match = re.search(r"(\d+)\s*(tb|тб|gb|гб)", name_lower)
-                if cap_match:
-                    size = int(cap_match.group(1))
-                    unit = cap_match.group(2).lower()
-                    if unit in ["tb", "тб"]:
-                        capacity = f"{size}TB"
-                    else:
-                        capacity = f"{size}GB"
-
-                alternatives.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "price": p.price,
-                    "discount_price": p.discount_price,
-                    "capacity": capacity,
-                })
-
-        elif component_type == "case":
-            # Case has no compatibility requirements (simplified)
-            products = await self._query_products(
-                categories=["Корпуса"],
-                max_price=budget,
-            )
+        elif component_type in ["case", "cooler"]:
+            if component_type == "case":
+                products = await self.repo.find_cases(max_price=max_price, limit=10)
+            else:
+                socket = None
+                if current_build.cpu and current_build.cpu.specs:
+                    socket = current_build.cpu.specs.socket
+                products = await self.repo.find_coolers(
+                    socket=socket.value if socket else None,
+                    max_price=max_price,
+                    limit=10,
+                )
 
             for p in products:
                 alternatives.append({
@@ -1641,37 +837,8 @@ class PCAssemblyEngine:
                     "discount_price": p.discount_price,
                 })
 
-        elif component_type == "cooler":
-            # Cooler - filter by socket if CPU exists
-            products = await self._query_products(
-                categories=["Кулеры для процессоров", "Кулеры"],
-                max_price=budget,
-            )
-
-            socket_kw = []
-            if current_build.cpu and current_build.cpu.specs.socket:
-                if current_build.cpu.specs.socket in [Socket.AM4, Socket.AM5]:
-                    socket_kw = ["am4", "am5", "amd"]
-                elif current_build.cpu.specs.socket == Socket.LGA1700:
-                    socket_kw = ["lga1700", "lga 1700", "1700", "intel"]
-
-            for p in products:
-                name_lower = p.name.lower()
-                # Prefer socket-compatible coolers
-                if socket_kw and not any(kw in name_lower for kw in socket_kw):
-                    continue
-
-                alternatives.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "price": p.price,
-                    "discount_price": p.discount_price,
-                })
-
-        # Sort by price
         alternatives.sort(key=lambda x: x.get("discount_price") or x.get("price") or 0)
 
-        # Apply preference filter
         if preference:
             pref_lower = preference.lower()
             if "дешев" in pref_lower or "cheap" in pref_lower:
@@ -1679,7 +846,60 @@ class PCAssemblyEngine:
             elif "дорог" in pref_lower or "лучш" in pref_lower:
                 alternatives = alternatives[-5:]
             else:
-                # Brand filter
                 alternatives = [a for a in alternatives if preference.lower() in a["name"].lower()][:5]
 
         return alternatives[:10]
+
+    # =========================================================================
+    # PERIPHERALS
+    # =========================================================================
+
+    async def find_peripherals(
+        self,
+        peripheral_type: str,
+        max_price: Optional[int] = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Find peripherals by type."""
+        products = await self.repo.find_peripherals(
+            peripheral_type=peripheral_type,
+            max_price=max_price,
+            limit=limit,
+        )
+
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "price": p.price,
+                "discount_price": p.discount_price,
+                "type": peripheral_type,
+            }
+            for p in products
+        ]
+
+    async def add_peripheral_to_build(
+        self,
+        build: BuildResult,
+        peripheral_type: str,
+        product_id: int,
+    ) -> BuildResult:
+        """Add a peripheral to the build."""
+        from sqlalchemy import select
+
+        result = await self.session.execute(
+            select(Product).where(Product.id == product_id)
+        )
+        product = result.scalar_one_or_none()
+
+        if product:
+            build.peripherals[peripheral_type] = BuildComponent(
+                product_id=product.id,
+                name=product.name,
+                price=product.price or 0,
+                discount_price=product.discount_price or 0,
+                specs=None,
+                component_type=peripheral_type,
+            )
+
+        return build
