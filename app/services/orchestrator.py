@@ -674,11 +674,15 @@ class Orchestrator:
         chat_history: str,
         context: ConversationContext,
     ) -> str:
-        """Generate conversational response."""
-        # Check for greeting
-        greeting_words = ["привет", "здравствуй", "добрый", "салем", "хай", "hello", "hi"]
+        """Generate conversational response with personality.
+
+        CRITICAL FIX: Handle interruptions and off-topic messages gracefully.
+        Don't act like a robot - be friendly and human-like.
+        """
         msg_lower = message.lower()
 
+        # Check for greeting
+        greeting_words = ["привет", "здравствуй", "добрый", "салем", "хай", "hello", "hi"]
         if not chat_history or any(word in msg_lower for word in greeting_words):
             return (
                 "Привет! Я консультант Over-Shop.kz.\n\n"
@@ -686,32 +690,101 @@ class Orchestrator:
                 "Что вас интересует?"
             )
 
-        # Use LLM for other general responses
-        system_prompt = """Ты консультант магазина компьютерной техники Over-Shop.kz.
+        # Handle common interruptions/off-topic messages
+        # These should be handled gracefully, not ignored
+        interruption_response = self._handle_interruption(msg_lower, context)
+        if interruption_response:
+            return interruption_response
 
-Твои темы:
+        # Use LLM for conversational responses
+        # CRITICAL: Updated personality - friendly expert, not a robot
+        system_prompt = """Ты — дружелюбный эксперт по компьютерной технике в Over-Shop.kz.
+
+ЛИЧНОСТЬ:
+- Ты живой человек, не робот. Отвечай естественно.
+- Если клиент злится — успокой его, пойми его проблему.
+- Если клиент шутит — поддержи шутку, но мягко верни к теме.
+- Если клиент спрашивает о тебе — ответь коротко и верни к делу.
+
+ТВОИ ТЕМЫ:
 - Сборка ПК и подбор комплектующих
 - Поиск товаров из каталога
 - Доставка, оплата, гарантия, адреса магазинов
 
-Стиль ответа:
-- Краткий, по делу
-- Уверенный, но дружелюбный
-- Если вопрос не по теме - вежливо верни к компьютерной технике
+СТИЛЬ:
+- Краткий, но человечный
+- Уверенный, но не высокомерный
+- Если не знаешь — честно скажи и предложи связаться с менеджером
 
-Запрещено:
-- Лекции и длинные объяснения
-- "Я не могу", извинения
-- Выдумывать цены или характеристики"""
+ЗАПРЕЩЕНО:
+- Длинные лекции
+- Фразы типа "Я — языковая модель" или "Я не могу"
+- Придумывать цены или характеристики товаров
+- Игнорировать эмоции клиента"""
+
+        # Add context about current state
+        context_hint = ""
+        if context.has_build():
+            total = context.current_build.get("total_price", 0)
+            context_hint = f"\n[У клиента есть сборка ПК на {total:,}₸. Если нужно — предложи изменить компоненты.]"
 
         try:
             return await self.llm_client.complete(
                 system_prompt=system_prompt,
-                user_prompt=f"История: {chat_history}\n\nСообщение: {message}",
+                user_prompt=f"История: {chat_history}{context_hint}\n\nСообщение клиента: {message}",
                 temperature=0.7,
             )
         except Exception:
             return "Чем могу помочь? Подберу комплектующие или найду нужный товар."
+
+    def _handle_interruption(self, msg_lower: str, context: ConversationContext) -> Optional[str]:
+        """Handle common interruptions gracefully.
+
+        CRITICAL: Don't act like a robot. Respond naturally to off-topic messages.
+        """
+        # Name/identity questions
+        if any(w in msg_lower for w in ["как тебя зовут", "кто ты", "ты кто", "твое имя"]):
+            return (
+                "Меня зовут Овер — консультант Over-Shop.kz! 😊\n\n"
+                "Помогу собрать ПК или найти нужный товар. Чем могу помочь?"
+            )
+
+        # Insults/frustration - respond calmly
+        if any(w in msg_lower for w in ["тупой", "тупая", "идиот", "дурак", "бот", "робот"]):
+            base_response = (
+                "Понимаю ваше разочарование. Давайте попробуем разобраться вместе.\n\n"
+            )
+            if context.has_build():
+                return base_response + "Что именно не устраивает в текущей сборке? Могу предложить альтернативы."
+            else:
+                return base_response + "Расскажите, что вы ищете — постараюсь помочь."
+
+        # Thanks
+        if any(w in msg_lower for w in ["спасибо", "благодарю", "thanks"]):
+            if context.has_build():
+                return (
+                    "Рад помочь! Сборка сохранена.\n\n"
+                    "Если захотите что-то изменить — просто напишите.\n"
+                    "Удачных покупок! 🎮"
+                )
+            return "Всегда рад помочь! Обращайтесь, если понадобится что-то ещё."
+
+        # Jokes/small talk
+        if any(w in msg_lower for w in ["ха", "лол", "прикольно", "круто", "класс"]):
+            return None  # Let LLM handle this naturally
+
+        # "What can you do" questions
+        if any(w in msg_lower for w in ["что умеешь", "что ты можешь", "что ты умеешь"]):
+            return (
+                "Я могу:\n"
+                "• Собрать ПК под ваш бюджет (игровой, рабочий, офисный)\n"
+                "• Найти конкретные комплектующие\n"
+                "• Подобрать периферию (монитор, мышь, клавиатура)\n"
+                "• Рассказать о доставке и оплате\n\n"
+                "Что вас интересует?"
+            )
+
+        return None  # Not an interruption, proceed normally
 
     async def _get_chat_history(self, session_id: str, limit: int = 10) -> str:
         """Get formatted chat history."""

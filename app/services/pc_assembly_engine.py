@@ -149,22 +149,23 @@ class BudgetBalancer:
     """Smart budget allocation based on purpose and total budget."""
 
     # Budget allocation percentages by purpose
+    # CRITICAL: These percentages should add up to ~1.0 and GPU should be ~45% for gaming
     ALLOCATION_PROFILES = {
         "gaming": {
-            "cpu": 0.17, "motherboard": 0.10, "ram": 0.12,
-            "gpu": 0.38, "psu": 0.07, "case": 0.06, "storage": 0.08, "cooler": 0.02,
+            "cpu": 0.18, "motherboard": 0.10, "ram": 0.10,
+            "gpu": 0.45, "psu": 0.06, "case": 0.05, "storage": 0.04, "cooler": 0.02,
         },
         "work": {
-            "cpu": 0.28, "motherboard": 0.12, "ram": 0.18,
-            "gpu": 0.12, "psu": 0.08, "case": 0.07, "storage": 0.12, "cooler": 0.03,
+            "cpu": 0.30, "motherboard": 0.12, "ram": 0.20,
+            "gpu": 0.10, "psu": 0.08, "case": 0.07, "storage": 0.10, "cooler": 0.03,
         },
         "office": {
-            "cpu": 0.22, "motherboard": 0.15, "ram": 0.15,
-            "gpu": 0.08, "psu": 0.10, "case": 0.12, "storage": 0.15, "cooler": 0.03,
+            "cpu": 0.25, "motherboard": 0.15, "ram": 0.15,
+            "gpu": 0.05, "psu": 0.10, "case": 0.12, "storage": 0.15, "cooler": 0.03,
         },
         "streaming": {
-            "cpu": 0.25, "motherboard": 0.10, "ram": 0.14,
-            "gpu": 0.33, "psu": 0.06, "case": 0.05, "storage": 0.05, "cooler": 0.02,
+            "cpu": 0.22, "motherboard": 0.10, "ram": 0.12,
+            "gpu": 0.40, "psu": 0.06, "case": 0.04, "storage": 0.04, "cooler": 0.02,
         },
     }
 
@@ -222,6 +223,54 @@ class PCAssemblyEngine:
         self.repo = ProductRepository(session)
         self.extractor = SpecsExtractor()
         self.balancer = BudgetBalancer()
+
+    @staticmethod
+    def _select_by_target_price(
+        products: List[Product],
+        target_price: int,
+        min_price: Optional[int] = None,
+    ) -> List[Product]:
+        """Select products closest to target price (not cheapest!).
+
+        CRITICAL FIX: If budget is 550,000₸, we should find components that
+        USE that budget, not the cheapest ones available.
+
+        Args:
+            products: List of candidate products
+            target_price: The ideal price to target
+            min_price: Optional minimum price (defaults to 50% of target)
+
+        Returns:
+            Products sorted by closeness to target price
+        """
+        if not products:
+            return []
+
+        min_price = min_price or int(target_price * 0.5)
+
+        # Filter products within acceptable range
+        candidates = []
+        for p in products:
+            price = p.discount_price or p.price or 0
+            if price >= min_price:  # No upper limit - allow exceeding target slightly
+                candidates.append(p)
+
+        if not candidates:
+            # Fallback: return what we have
+            return products
+
+        # Sort by distance from target price (closest first)
+        # Prefer products slightly above target over those far below
+        def price_distance(p: Product) -> float:
+            price = p.discount_price or p.price or 0
+            distance = abs(price - target_price)
+            # Penalize being far below target more than being slightly above
+            if price < target_price * 0.7:
+                distance *= 1.5  # Heavy penalty for being too cheap
+            return distance
+
+        candidates.sort(key=price_distance)
+        return candidates
 
     async def build_pc(
         self,
@@ -315,9 +364,9 @@ class PCAssemblyEngine:
         result = BuildResult(success=False)
         remaining = budget
 
-        # Step 1: Select CPU for this socket
-        result.reasoning.append(f"[1/7] Ищем CPU для {socket}")
-        cpu_candidates = await self._find_cpus(socket, allocation.cpu, tier)
+        # Step 1: Select CPU for this socket - TARGET the allocated budget
+        result.reasoning.append(f"[1/7] Ищем CPU для {socket}, целевой бюджет: {allocation.cpu:,}₸")
+        cpu_candidates = await self._find_cpus(socket, target_price=allocation.cpu, tier=tier)
 
         if not cpu_candidates:
             result.error_message = f"CPU для {socket} не найден в бюджете {allocation.cpu:,}₸"
@@ -338,11 +387,11 @@ class PCAssemblyEngine:
             remaining = budget - cpu_price
             result.reasoning.append(f"CPU: {cpu_product.name} ({cpu_price:,}₸)")
 
-            # Step 2: Find compatible motherboard
-            result.reasoning.append(f"[2/7] Ищем материнскую плату для {socket}")
+            # Step 2: Find compatible motherboard - TARGET the allocated budget
+            result.reasoning.append(f"[2/7] Ищем материнскую плату для {socket}, целевой бюджет: {allocation.motherboard:,}₸")
             mb_result = await self._find_motherboard(
                 socket=socket,
-                max_price=min(allocation.motherboard, int(remaining * 0.2)),
+                target_price=allocation.motherboard,
                 tier=tier,
             )
 
@@ -369,10 +418,10 @@ class PCAssemblyEngine:
                 result.reasoning.append("Тип RAM не определен для материнской платы, пробуем другой CPU")
                 continue
 
-            result.reasoning.append(f"[3/7] Ищем RAM типа {mb_specs.ram_type.value}")
+            result.reasoning.append(f"[3/7] Ищем RAM типа {mb_specs.ram_type.value}, целевой бюджет: {allocation.ram:,}₸")
             ram_result = await self._find_ram(
                 ram_type=mb_specs.ram_type.value,
-                max_price=min(int(allocation.ram * 1.5), int(remaining * 0.2)),
+                target_price=allocation.ram,
                 min_size_gb=16 if purpose == "gaming" else 8,
             )
 
@@ -394,11 +443,11 @@ class PCAssemblyEngine:
             remaining -= ram_price
             result.reasoning.append(f"RAM: {ram_product.name} ({ram_price:,}₸)")
 
-            # Step 4: GPU (if budget allows and purpose requires)
-            if purpose in ["gaming", "streaming"] and remaining > 50000:
-                result.reasoning.append("[4/7] Ищем видеокарту")
-                gpu_budget = min(allocation.gpu, int(remaining * 0.6))
-                gpu_result = await self._find_gpu(max_price=gpu_budget, purpose=purpose)
+            # Step 4: GPU (if purpose requires) - TARGET the allocated budget!
+            # CRITICAL: For gaming, GPU should get 45% of budget
+            if purpose in ["gaming", "streaming"]:
+                result.reasoning.append(f"[4/7] Ищем видеокарту, целевой бюджет: {allocation.gpu:,}₸")
+                gpu_result = await self._find_gpu(target_price=allocation.gpu, purpose=purpose)
 
                 if gpu_result:
                     gpu_product, gpu_specs = gpu_result
@@ -517,122 +566,216 @@ class PCAssemblyEngine:
     # =========================================================================
 
     async def _find_cpus(
-        self, socket: str, max_price: int, tier: Tier
+        self, socket: str, target_price: int, tier: Tier
     ) -> List[Tuple[Product, CPUSpecs]]:
-        """Find CPU candidates for a given socket."""
+        """Find CPU candidates for a given socket, targeting the allocated budget.
+
+        CRITICAL: Uses target_price selection - picks CPUs closest to budget allocation,
+        NOT the cheapest ones!
+        """
+        # Fetch wide range of CPUs (no min_price restriction in DB query)
         products = await self.repo.find_cpus(
-            max_price=max_price,
-            min_price=int(max_price * 0.4),
-            limit=15,
+            max_price=int(target_price * 1.5),  # Allow some flexibility above target
+            limit=30,
         )
 
-        candidates = []
+        # Filter by socket and extract specs
+        valid_products = []
         for p in products:
             specs = self.extractor.extract_cpu_specs(p.name, p.specifications)
             if specs and specs.socket and specs.socket.value == socket:
-                candidates.append((p, specs))
+                valid_products.append((p, specs))
 
-        # Sort by price descending (best value for budget)
-        candidates.sort(key=lambda x: x[0].discount_price or x[0].price or 0, reverse=True)
+        if not valid_products:
+            return []
+
+        # Use target price selection - sort by closeness to target
+        sorted_products = self._select_by_target_price(
+            [p for p, _ in valid_products],
+            target_price=target_price,
+            min_price=int(target_price * 0.4),
+        )
+
+        # Rebuild candidates list maintaining order
+        product_to_specs = {p.id: specs for p, specs in valid_products}
+        candidates = [(p, product_to_specs[p.id]) for p in sorted_products if p.id in product_to_specs]
+
+        logger.info(f"[CPU] Target: {target_price:,}₸, found {len(candidates)} candidates for {socket}")
         return candidates[:5]
 
     async def _find_motherboard(
-        self, socket: str, max_price: int, tier: Tier
+        self, socket: str, target_price: int, tier: Tier
     ) -> Optional[Tuple[Product, MotherboardSpecs]]:
-        """Find a compatible motherboard."""
+        """Find a compatible motherboard, targeting the allocated budget."""
         products = await self.repo.find_compatible_motherboards(
             socket=socket,
-            max_price=max_price,
+            max_price=int(target_price * 1.5),  # Allow flexibility above target
             tier=tier.value if tier == Tier.BUDGET else None,
-            limit=20,
+            limit=30,
         )
 
+        # Filter valid motherboards
+        valid_products = []
         for p in products:
             specs = self.extractor.extract_motherboard_specs(p.name, p.specifications)
-            if specs and specs.is_complete:
-                if specs.socket and specs.socket.value == socket:
-                    return (p, specs)
+            if specs and specs.is_complete and specs.socket and specs.socket.value == socket:
+                valid_products.append((p, specs))
+
+        if not valid_products:
+            return None
+
+        # Use target price selection
+        sorted_products = self._select_by_target_price(
+            [p for p, _ in valid_products],
+            target_price=target_price,
+            min_price=int(target_price * 0.4),
+        )
+
+        if not sorted_products:
+            return None
+
+        # Return the best match (closest to target price)
+        best = sorted_products[0]
+        for p, specs in valid_products:
+            if p.id == best.id:
+                logger.info(f"[MB] Target: {target_price:,}₸, selected: {p.name} @ {(p.discount_price or p.price):,}₸")
+                return (p, specs)
 
         return None
 
     async def _find_ram(
-        self, ram_type: str, max_price: int, min_size_gb: int = 16
+        self, ram_type: str, target_price: int, min_size_gb: int = 16
     ) -> Optional[Tuple[Product, RAMSpecs]]:
-        """Find compatible RAM."""
+        """Find compatible RAM, targeting the allocated budget."""
         products = await self.repo.find_compatible_ram(
             ram_type=ram_type,
-            max_price=max_price,
+            max_price=int(target_price * 1.5),  # Allow flexibility
             min_size_gb=min_size_gb,
-            limit=20,
+            limit=30,
         )
 
-        best = None
-        best_score = -1
-
+        # Filter valid RAM
+        valid_products = []
         for p in products:
             specs = self.extractor.extract_ram_specs(p.name, p.specifications)
             if not specs or not specs.is_complete:
                 continue
-
             if specs.ram_type and specs.ram_type.value != ram_type:
                 continue
+            valid_products.append((p, specs))
 
-            price = p.discount_price or p.price or 0
-            if price > max_price:
-                continue
+        if not valid_products:
+            return None
 
-            score = price
-            if specs.size_gb:
-                if specs.size_gb >= 32:
-                    score *= 2.0
-                elif specs.size_gb >= 16:
-                    score *= 1.5
-                elif specs.size_gb <= 8:
-                    score *= 0.3
+        # Sort by target price first
+        sorted_products = self._select_by_target_price(
+            [p for p, _ in valid_products],
+            target_price=target_price,
+            min_price=int(target_price * 0.3),
+        )
 
-            if specs.frequency:
-                if ram_type == "DDR5" and specs.frequency >= 6000:
-                    score *= 1.2
-                elif ram_type == "DDR4" and specs.frequency >= 3600:
-                    score *= 1.2
+        if not sorted_products:
+            return None
 
-            if score > best_score:
-                best_score = score
-                best = (p, specs)
+        # Find best RAM from target-price-sorted list with quality scoring
+        best = None
+        best_score = -1
+
+        for p in sorted_products[:10]:  # Check top 10 closest to target
+            for prod, specs in valid_products:
+                if prod.id != p.id:
+                    continue
+
+                price = p.discount_price or p.price or 0
+                # Base score from closeness to target (inverted distance)
+                distance = abs(price - target_price)
+                score = 1000000 - distance  # Higher is better
+
+                # Bonus for good specs
+                if specs.size_gb:
+                    if specs.size_gb >= 32:
+                        score += 50000
+                    elif specs.size_gb >= 16:
+                        score += 30000
+
+                if specs.frequency:
+                    if ram_type == "DDR5" and specs.frequency >= 6000:
+                        score += 20000
+                    elif ram_type == "DDR4" and specs.frequency >= 3600:
+                        score += 20000
+
+                if score > best_score:
+                    best_score = score
+                    best = (prod, specs)
+
+        if best:
+            logger.info(f"[RAM] Target: {target_price:,}₸, selected: {best[0].name} @ {(best[0].discount_price or best[0].price):,}₸")
 
         return best
 
     async def _find_gpu(
-        self, max_price: int, purpose: str
+        self, target_price: int, purpose: str
     ) -> Optional[Tuple[Product, GPUSpecs]]:
-        """Find a GPU."""
+        """Find a GPU, targeting the allocated budget.
+
+        CRITICAL: For gaming builds, GPU gets 45% of budget.
+        If budget is 550,000₸, GPU target is ~247,500₸.
+        We should find a GPU CLOSE to that price, not the cheapest one!
+        """
         products = await self.repo.find_gpus(
-            max_price=max_price,
-            min_price=int(max_price * 0.3),
-            limit=15,
+            max_price=int(target_price * 1.3),  # Allow slightly above target
+            limit=30,
         )
 
+        # Filter valid GPUs
+        valid_products = []
+        for p in products:
+            specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
+            if specs and specs.is_complete:
+                valid_products.append((p, specs))
+
+        if not valid_products:
+            return None
+
+        # Sort by target price
+        sorted_products = self._select_by_target_price(
+            [p for p, _ in valid_products],
+            target_price=target_price,
+            min_price=int(target_price * 0.5),  # At least 50% of target
+        )
+
+        if not sorted_products:
+            return None
+
+        # Find best GPU from target-price-sorted list with quality scoring
         best = None
         best_score = -1
 
-        for p in products:
-            specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
-            if not specs or not specs.is_complete:
-                continue
+        for p in sorted_products[:10]:
+            for prod, specs in valid_products:
+                if prod.id != p.id:
+                    continue
 
-            price = p.discount_price or p.price or 0
-            if price > max_price:
-                continue
+                price = p.discount_price or p.price or 0
+                # Base score from closeness to target
+                distance = abs(price - target_price)
+                score = 1000000 - distance
 
-            score = price
-            if specs.vram_gb and specs.vram_gb >= 8:
-                score *= 1.2
-            if specs.vram_gb and specs.vram_gb >= 12:
-                score *= 1.3
+                # Bonus for good VRAM
+                if specs.vram_gb:
+                    if specs.vram_gb >= 16:
+                        score += 50000
+                    elif specs.vram_gb >= 12:
+                        score += 40000
+                    elif specs.vram_gb >= 8:
+                        score += 20000
 
-            if score > best_score:
-                best_score = score
-                best = (p, specs)
+                if score > best_score:
+                    best_score = score
+                    best = (prod, specs)
+
+        if best:
+            logger.info(f"[GPU] Target: {target_price:,}₸, selected: {best[0].name} @ {(best[0].discount_price or best[0].price):,}₸")
 
         return best
 

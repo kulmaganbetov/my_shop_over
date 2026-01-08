@@ -75,6 +75,71 @@ def normalize_component_type(component_type: str) -> str:
     return COMPONENT_NAME_MAPPING.get(normalized, normalized)
 
 
+# ============================================================================
+# HALLUCINATION GUARD
+# ============================================================================
+
+# Known fake/non-existent products that LLM might hallucinate
+HALLUCINATED_PRODUCTS = [
+    # Fake RTX models
+    "5050", "5060", "5060ti", "5070", "5070ti", "5080", "5090",
+    "6050", "6060",
+    # Fake AMD models
+    "rx 8000", "rx 8700", "rx 8800", "rx 8900",
+    # Fake Intel Arc models
+    "arc a1000", "arc a900",
+    # Fake CPUs
+    "ryzen 9 9950", "ryzen 7 9700", "core i9-15",
+]
+
+
+def is_hallucinated_product(product_name: str) -> bool:
+    """Check if product name contains hallucinated/fake model numbers.
+
+    CRITICAL: LLM should NEVER invent products. This guard catches common
+    hallucinations like "RTX 5050" or "RTX 5060" which don't exist.
+
+    Returns:
+        True if product appears to be hallucinated
+    """
+    if not product_name:
+        return True  # Empty name is suspicious
+
+    name_lower = product_name.lower()
+
+    for fake in HALLUCINATED_PRODUCTS:
+        if fake in name_lower:
+            logger.warning(f"HALLUCINATION DETECTED: '{product_name}' contains '{fake}'")
+            return True
+
+    return False
+
+
+def validate_product_exists(product) -> bool:
+    """Validate that a product is real (from database, not hallucinated).
+
+    CRITICAL: Products MUST have:
+    - A valid ID (not 0 or None)
+    - A real SKU
+    - No hallucinated model names
+    """
+    if not product:
+        return False
+
+    if not product.id or product.id <= 0:
+        logger.warning(f"Invalid product ID: {product.id}")
+        return False
+
+    if not product.name:
+        logger.warning("Product has no name")
+        return False
+
+    if is_hallucinated_product(product.name):
+        return False
+
+    return True
+
+
 @dataclass
 class BuildTier:
     """Represents build quality tier."""
@@ -549,6 +614,10 @@ class PCBuildService:
         workstation_kw = ["quadro", "firepro", "wx ", "radeon pro", "a2000", "a4000"]
 
         for product in products:
+            # HALLUCINATION GUARD: Validate product is real
+            if not validate_product_exists(product):
+                continue
+
             name_lower = (product.name or "").lower()
 
             if purpose == "gaming":

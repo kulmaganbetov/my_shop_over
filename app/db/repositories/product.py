@@ -67,6 +67,54 @@ class ProductRepository(BaseRepository[Product]):
     # All methods MUST filter by stock > 0
     # =========================================================================
 
+    async def get_products_by_strict_category(
+        self,
+        category: str,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        limit: int = 20,
+    ) -> List[Product]:
+        """Get products by STRICT category match - NO vector search, NO hallucinations.
+
+        CRITICAL: This method is the primary search method.
+        Vector search should only be used as fallback for fuzzy queries.
+
+        If no products match, returns EMPTY list (never hallucinate products).
+
+        Args:
+            category: Exact category string to match
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            limit: Maximum results
+        """
+        conditions = [
+            Product.stock > 0,
+            Product.is_active == True,
+            Product.category == category,  # EXACT match
+        ]
+
+        if min_price:
+            conditions.append(
+                func.coalesce(Product.discount_price, Product.price) >= min_price
+            )
+        if max_price:
+            conditions.append(
+                func.coalesce(Product.discount_price, Product.price) <= max_price
+            )
+
+        result = await self.session.execute(
+            select(Product)
+            .where(and_(*conditions))
+            .order_by(
+                func.coalesce(Product.discount_price, Product.price).desc()
+            )
+            .limit(limit)
+        )
+
+        products = list(result.scalars().all())
+        logger.info(f"[REPO] Strict category '{category}': found {len(products)} products")
+        return products
+
     async def find_cpus(
         self,
         min_price: Optional[int] = None,
@@ -479,6 +527,15 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%сервер%"))
         conditions.append(~Product.name.ilike("%enterprise%"))
 
+        # CRITICAL: Exclude USB flash drives (they are NOT storage for PC builds)
+        conditions.append(~Product.name.ilike("%USB%"))
+        conditions.append(~Product.name.ilike("%Flash%"))
+        conditions.append(~Product.name.ilike("%флешк%"))
+        conditions.append(~Product.name.ilike("%флэшк%"))
+        conditions.append(~Product.name.ilike("%накопитель USB%"))
+        conditions.append(~Product.category.ilike("%Flash%"))
+        conditions.append(~Product.category.ilike("%USB%"))
+
         result = await self.session.execute(
             select(Product)
             .where(and_(*conditions))
@@ -525,6 +582,15 @@ class ProductRepository(BaseRepository[Product]):
         # Form factor filter
         if form_factor:
             conditions.append(Product.name.ilike(f"%{form_factor}%"))
+
+        # CRITICAL: Exclude fans/ventilators (they are NOT cases)
+        conditions.append(~Product.name.ilike("%вентилятор%"))
+        conditions.append(~Product.name.ilike("%Fan %"))
+        conditions.append(~Product.name.ilike("% Fan%"))
+        conditions.append(~Product.name.ilike("%кулер%"))
+        conditions.append(~Product.name.ilike("%охлаждени%"))
+        conditions.append(~Product.category.ilike("%вентилятор%"))
+        conditions.append(~Product.category.ilike("%кулер%"))
 
         result = await self.session.execute(
             select(Product)
