@@ -495,9 +495,21 @@ class PCAssemblyEngine:
                 result.reasoning.append(f"PSU {required_wattage}W не найден")
 
             # Step 6: Storage
-            result.reasoning.append("[6/7] Ищем накопитель")
+            # CRITICAL: Minimum SSD capacity based on total budget
+            # Budget < 300k: 256GB min
+            # Budget 300k-500k: 512GB min
+            # Budget > 500k: 1TB min
+            if budget >= 500000:
+                min_storage_gb = 1000  # 1TB
+            elif budget >= 300000:
+                min_storage_gb = 512
+            else:
+                min_storage_gb = 256
+
+            result.reasoning.append(f"[6/7] Ищем накопитель (минимум {min_storage_gb}GB)")
             storage_result = await self._find_storage(
-                max_price=min(allocation.storage, int(remaining * 0.4)),
+                max_price=min(allocation.storage * 2, int(remaining * 0.5)),  # Allow more budget for storage
+                min_capacity_gb=min_storage_gb,
             )
 
             if storage_result:
@@ -827,21 +839,44 @@ class PCAssemblyEngine:
         return None
 
     async def _find_storage(
-        self, max_price: int
+        self, max_price: int, min_capacity_gb: int = 256
     ) -> Optional[Tuple[Product, StorageSpecs]]:
-        """Find storage."""
+        """Find storage with minimum capacity requirement.
+
+        CRITICAL: min_capacity_gb should be based on total budget:
+        - Budget < 300k: 256GB minimum
+        - Budget 300k-500k: 512GB minimum
+        - Budget > 500k: 1TB minimum
+        """
         products = await self.repo.find_storage(
             max_price=max_price,
             storage_type="SSD",
-            limit=10,
+            min_capacity_gb=min_capacity_gb,
+            limit=20,
         )
 
+        # Filter by minimum capacity and find best option
+        valid_products = []
         for p in products:
             specs = self.extractor.extract_storage_specs(p.name, p.specifications)
-            if specs and specs.is_complete:
-                return (p, specs)
+            if specs and specs.is_complete and specs.capacity_gb >= min_capacity_gb:
+                valid_products.append((p, specs))
 
-        return None
+        if not valid_products:
+            # Fallback: try any SSD without capacity filter
+            logger.warning(f"[STORAGE] No SSD >= {min_capacity_gb}GB found, trying any")
+            for p in products:
+                specs = self.extractor.extract_storage_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    return (p, specs)
+            return None
+
+        # Sort by capacity (prefer larger within budget)
+        valid_products.sort(key=lambda x: x[1].capacity_gb, reverse=True)
+
+        best = valid_products[0]
+        logger.info(f"[STORAGE] Selected: {best[0].name} ({best[1].capacity_gb}GB)")
+        return best
 
     async def _find_case(self, max_price: int) -> Optional[Product]:
         """Find a case."""
