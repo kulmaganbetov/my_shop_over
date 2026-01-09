@@ -676,6 +676,21 @@ class ProductRepository(BaseRepository[Product]):
                 socket_conditions = [Product.name.ilike(f"%{kw}%") for kw in socket_kw]
                 conditions.append(or_(*socket_conditions))
 
+        # CRITICAL: Exclude cooler accessories (NOT actual coolers!)
+        # We need Active Coolers (Radiator + Fan), not mounting kits
+        conditions.append(~Product.name.ilike("%Bracket%"))
+        conditions.append(~Product.name.ilike("%крепление%"))
+        conditions.append(~Product.name.ilike("%крепления%"))
+        conditions.append(~Product.name.ilike("%Mount%"))
+        conditions.append(~Product.name.ilike("%Thermal Paste%"))
+        conditions.append(~Product.name.ilike("%термопаст%"))
+        conditions.append(~Product.name.ilike("%Screw%"))
+        conditions.append(~Product.name.ilike("%винт%"))
+        conditions.append(~Product.name.ilike("%комплект%"))
+        conditions.append(~Product.name.ilike("%Kit%"))
+        conditions.append(~Product.name.ilike("%Adapter%"))
+        conditions.append(~Product.name.ilike("%переходник%"))
+
         result = await self.session.execute(
             select(Product)
             .where(and_(*conditions))
@@ -686,7 +701,7 @@ class ProductRepository(BaseRepository[Product]):
         )
 
         products = list(result.scalars().all())
-        logger.info(f"[REPO] Found {len(products)} coolers")
+        logger.info(f"[REPO] Found {len(products)} coolers (excluding accessories)")
         return products
 
     # =========================================================================
