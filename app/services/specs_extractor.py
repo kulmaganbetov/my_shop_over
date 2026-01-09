@@ -317,6 +317,51 @@ class StorageSpecs:
         }
 
 
+@dataclass
+class CoolerSpecs:
+    """Extracted cooler specifications."""
+    max_tdp: int = 65  # Maximum TDP cooler can handle
+    type: str = "air"  # air, liquid, aio
+    height_mm: Optional[int] = None
+    compatible_sockets: List[str] = field(default_factory=list)
+    is_stock: bool = False  # True for Intel Laminar, AMD Wraith
+    is_complete: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "max_tdp": self.max_tdp,
+            "type": self.type,
+            "height_mm": self.height_mm,
+            "compatible_sockets": self.compatible_sockets,
+            "is_stock": self.is_stock,
+        }
+
+
+# Stock cooler TDP limits - CRITICAL for preventing dangerous pairings
+STOCK_COOLER_TDP = {
+    # Intel stock coolers
+    "laminar rm1": 65,      # i3/i5 non-K
+    "laminar rs1": 65,      # Same tier
+    "laminar rh1": 95,      # i7 non-K stock
+    # AMD stock coolers
+    "wraith stealth": 65,   # Ryzen 5
+    "wraith spire": 95,     # Ryzen 5/7
+    "wraith prism": 105,    # Ryzen 7/9
+    # Budget aftermarket
+    "deepcool ak400": 120,
+    "id-cooling se-214-xt": 130,
+    "gammaxx 400": 130,
+    # Mid-range
+    "dark rock 4": 200,
+    "noctua nh-d15": 250,
+    "deepcool ak620": 220,
+    # AIO liquid coolers
+    "240mm": 200,
+    "280mm": 250,
+    "360mm": 300,
+}
+
+
 class SpecsExtractor:
     """Extracts structured specs from product data with validation."""
 
@@ -722,6 +767,79 @@ class SpecsExtractor:
             return result
 
         return None
+
+    def extract_cooler_specs(self, name: str, specs: dict = None) -> CoolerSpecs:
+        """Extract cooler specifications from name.
+
+        CRITICAL: Used for TDP validation to prevent dangerous pairings
+        like Intel Laminar RM1 (65W) with i9-12900KF (241W).
+        """
+        result = CoolerSpecs()
+        name_lower = name.lower()
+
+        # Check for stock coolers first
+        for cooler_name, tdp in STOCK_COOLER_TDP.items():
+            if cooler_name in name_lower:
+                result.max_tdp = tdp
+                result.is_stock = cooler_name.startswith(("laminar", "wraith"))
+                result.is_complete = True
+                logger.info(f"[COOLER] Detected: '{cooler_name}' -> max TDP: {tdp}W")
+                return result
+
+        # Check for AIO/liquid coolers by radiator size
+        if any(x in name_lower for x in ["aio", "liquid", "водян", "жидкост"]):
+            result.type = "aio"
+            if "360" in name_lower or "360mm" in name_lower:
+                result.max_tdp = 300
+            elif "280" in name_lower or "280mm" in name_lower:
+                result.max_tdp = 250
+            elif "240" in name_lower or "240mm" in name_lower:
+                result.max_tdp = 200
+            elif "120" in name_lower or "120mm" in name_lower:
+                result.max_tdp = 130
+            else:
+                result.max_tdp = 200  # Default AIO
+            result.is_complete = True
+            return result
+
+        # Tower coolers - estimate by price range and name patterns
+        if any(x in name_lower for x in ["noctua", "be quiet", "deepcool ak620", "dark rock"]):
+            result.max_tdp = 220
+            result.is_complete = True
+            return result
+        elif any(x in name_lower for x in ["tower", "башен", "hyper", "gammaxx"]):
+            result.max_tdp = 150
+            result.is_complete = True
+            return result
+
+        # Default for unrecognized coolers - assume budget air cooler
+        result.max_tdp = 95
+        result.is_complete = True
+        return result
+
+    def is_cooler_sufficient_for_cpu(self, cooler: CoolerSpecs, cpu: CPUSpecs) -> bool:
+        """Check if cooler can handle CPU's TDP.
+
+        CRITICAL: Prevents dangerous pairings like:
+        - Intel Laminar RM1 (65W) with i9-12900KF (241W)
+        - AMD Wraith Stealth (65W) with Ryzen 9 5950X (105W)
+        """
+        if not cooler or not cpu:
+            return False
+
+        cpu_tdp = cpu.tdp or 65  # Default to 65W if unknown
+
+        # Add 20% safety margin
+        required_tdp = int(cpu_tdp * 1.2)
+
+        if cooler.max_tdp < required_tdp:
+            logger.warning(
+                f"[COOLER] Insufficient! CPU TDP: {cpu_tdp}W, "
+                f"Cooler max: {cooler.max_tdp}W (need {required_tdp}W)"
+            )
+            return False
+
+        return True
 
     # Compatibility check methods
     def is_compatible_cpu_mb(self, cpu: CPUSpecs, mb: MotherboardSpecs) -> bool:

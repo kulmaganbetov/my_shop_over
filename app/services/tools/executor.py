@@ -98,9 +98,12 @@ class ToolExecutor:
         sku_product = await self.product_repo.get_by_sku(query)
         if sku_product:
             products_data = [ProductSchema.model_validate(sku_product).model_dump()]
+            # CRITICAL: Clear competing lists to prevent selection confusion
             await self._update_context(session_id, {
                 "last_search_results": products_data,
                 "last_search_query": query,
+                "last_alternatives": [],  # Clear old alternatives
+                "last_peripherals": [],   # Clear old peripherals
             })
             return {"products": products_data, "total": 1, "query": query}
 
@@ -108,9 +111,12 @@ class ToolExecutor:
         kaspi_product = await self.product_repo.get_by_kaspi_code(query)
         if kaspi_product:
             products_data = [ProductSchema.model_validate(kaspi_product).model_dump()]
+            # CRITICAL: Clear competing lists to prevent selection confusion
             await self._update_context(session_id, {
                 "last_search_results": products_data,
                 "last_search_query": query,
+                "last_alternatives": [],  # Clear old alternatives
+                "last_peripherals": [],   # Clear old peripherals
             })
             return {"products": products_data, "total": 1, "query": query}
 
@@ -133,9 +139,12 @@ class ToolExecutor:
 
         products_data = [p.model_dump() for p in result.products]
 
+        # CRITICAL: Clear competing lists to prevent selection confusion
         await self._update_context(session_id, {
             "last_search_results": products_data,
             "last_search_query": query,
+            "last_alternatives": [],  # Clear old alternatives
+            "last_peripherals": [],   # Clear old peripherals
         })
 
         return {"products": products_data, "total": result.total_count, "query": query}
@@ -334,9 +343,12 @@ class ToolExecutor:
             preference=preference,
         )
 
+        # CRITICAL: Clear competing lists to prevent selection confusion
         await self._update_context(session_id, {
             "last_alternatives": alternatives,
             "last_component_type": component_type,
+            "last_search_results": [],  # Clear old search results
+            "last_peripherals": [],     # Clear old peripherals
         })
 
         if not alternatives:
@@ -473,9 +485,12 @@ class ToolExecutor:
             name = peripheral_names.get(peripheral_type, peripheral_type)
             return {"error": f"{name} не найдены в наличии"}
 
+        # CRITICAL: Clear competing lists to prevent selection confusion
         await self._update_context(session_id, {
             "last_peripherals": peripherals,
             "last_peripheral_type": peripheral_type,
+            "last_alternatives": [],     # Clear old alternatives
+            "last_search_results": [],   # Clear old search results
         })
 
         return {"peripherals": peripherals, "peripheral_type": peripheral_type}

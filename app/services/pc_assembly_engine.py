@@ -18,8 +18,8 @@ from app.db.models import Product
 from app.db.repositories.product import ProductRepository
 from app.services.specs_extractor import (
     SpecsExtractor, Socket, RAMType, Tier, FormFactor,
-    CPUSpecs, MotherboardSpecs, RAMSpecs, GPUSpecs, PSUSpecs, StorageSpecs,
-    SOCKET_RAM_SUPPORT, CHIPSET_TIERS,
+    CPUSpecs, MotherboardSpecs, RAMSpecs, GPUSpecs, PSUSpecs, StorageSpecs, CoolerSpecs,
+    SOCKET_RAM_SUPPORT, CHIPSET_TIERS, STOCK_COOLER_TDP,
 )
 
 logger = logging.getLogger(__name__)
@@ -533,24 +533,43 @@ class PCAssemblyEngine:
                 remaining -= case_price
                 result.reasoning.append(f"Case: {case_product.name} ({case_price:,}₸)")
 
+            # Get CPU TDP for cooler selection
+            cpu_tdp = cpu_specs.tdp if cpu_specs and cpu_specs.tdp else 65
+            # K/KF chips need more cooling
+            if "k" in cpu_product.name.lower() or "kf" in cpu_product.name.lower():
+                cpu_tdp = max(cpu_tdp, 125)  # Minimum 125W for K chips
+            if "i9" in cpu_product.name.lower():
+                cpu_tdp = max(cpu_tdp, 150)  # i9 needs serious cooling
+            if "12900" in cpu_product.name or "13900" in cpu_product.name or "14900" in cpu_product.name:
+                cpu_tdp = max(cpu_tdp, 241)  # Top-tier chips
+
             cooler_result = await self._find_cooler(
                 socket=socket,
-                max_price=min(allocation.cooler, remaining),
+                max_price=min(allocation.cooler * 3, remaining),  # Allow higher budget for adequate cooling
+                cpu_tdp=cpu_tdp,
             )
             if cooler_result:
-                cooler_product = cooler_result
+                cooler_product, cooler_specs = cooler_result
                 cooler_component = BuildComponent(
                     product_id=cooler_product.id,
                     name=cooler_product.name,
                     price=cooler_product.price or 0,
                     discount_price=cooler_product.discount_price or 0,
-                    specs=None,
+                    specs=cooler_specs,
                     component_type="cooler",
                 )
                 result.cooler = cooler_component
                 cooler_price = cooler_component.effective_price()
                 remaining -= cooler_price
-                result.reasoning.append(f"Cooler: {cooler_product.name} ({cooler_price:,}₸)")
+                result.reasoning.append(f"Cooler: {cooler_product.name} ({cooler_price:,}₸, max TDP: {cooler_specs.max_tdp}W)")
+            else:
+                # CRITICAL: Warn if no adequate cooler found
+                result.issues.append(CompatibilityIssue(
+                    severity="warning",
+                    component_a="cooler",
+                    component_b="cpu",
+                    message=f"Требуется кулер для CPU с TDP {cpu_tdp}W. В наличии нет подходящего."
+                ))
 
             # Build succeeded
             result.success = True
@@ -829,14 +848,51 @@ class PCAssemblyEngine:
         products = await self.repo.find_cases(max_price=max_price, limit=5)
         return products[0] if products else None
 
-    async def _find_cooler(self, socket: str, max_price: int) -> Optional[Product]:
-        """Find a CPU cooler."""
+    async def _find_cooler(
+        self, socket: str, max_price: int, cpu_tdp: int = 65
+    ) -> Optional[Tuple[Product, CoolerSpecs]]:
+        """Find a CPU cooler sufficient for the CPU's TDP.
+
+        CRITICAL: Validates that cooler can handle CPU TDP.
+        Prevents dangerous pairings like Intel Laminar RM1 (65W) with i9-12900KF (241W).
+        """
         products = await self.repo.find_coolers(
             socket=socket,
             max_price=max_price,
-            limit=5,
+            limit=20,  # Get more products to filter by TDP
         )
-        return products[0] if products else None
+
+        if not products:
+            return None
+
+        # Calculate required cooler capacity (20% safety margin)
+        required_tdp = int(cpu_tdp * 1.2)
+        logger.info(f"[COOLER] CPU TDP: {cpu_tdp}W, required cooler: {required_tdp}W")
+
+        # Filter and score coolers by TDP capability
+        valid_coolers = []
+        for p in products:
+            cooler_specs = self.extractor.extract_cooler_specs(p.name)
+
+            if cooler_specs.max_tdp >= required_tdp:
+                # Score: prefer coolers closer to required TDP (not overkill)
+                tdp_diff = cooler_specs.max_tdp - required_tdp
+                price = p.discount_price or p.price or 0
+                # Lower score is better: prioritize adequate TDP then price
+                score = tdp_diff * 100 + price
+                valid_coolers.append((p, cooler_specs, score))
+
+        if not valid_coolers:
+            # No cooler can handle this CPU - warn and return None
+            logger.warning(f"[COOLER] No cooler found for {cpu_tdp}W CPU in budget {max_price:,}₸")
+            return None
+
+        # Sort by score (lower is better)
+        valid_coolers.sort(key=lambda x: x[2])
+        best_product, best_specs, _ = valid_coolers[0]
+
+        logger.info(f"[COOLER] Selected: {best_product.name} (max TDP: {best_specs.max_tdp}W)")
+        return (best_product, best_specs)
 
     # =========================================================================
     # COMPONENT REPLACEMENT

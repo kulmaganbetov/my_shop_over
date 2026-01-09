@@ -366,6 +366,27 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%Tesla%"))
         conditions.append(~Product.name.ilike("%A100%"))
 
+        # CRITICAL: Exclude non-existent/hallucinated GPU models
+        # RTX 50-series doesn't exist yet (as of Jan 2025)
+        conditions.append(~Product.name.ilike("%RTX 5050%"))
+        conditions.append(~Product.name.ilike("%RTX 5060%"))
+        conditions.append(~Product.name.ilike("%RTX 5070%"))
+        conditions.append(~Product.name.ilike("%RTX 5080%"))
+        conditions.append(~Product.name.ilike("%RTX 5090%"))
+        conditions.append(~Product.name.ilike("%RTX5050%"))
+        conditions.append(~Product.name.ilike("%RTX5060%"))
+        conditions.append(~Product.name.ilike("%RTX5070%"))
+        conditions.append(~Product.name.ilike("%RTX5080%"))
+        conditions.append(~Product.name.ilike("%RTX5090%"))
+        # RTX 60-series also doesn't exist
+        conditions.append(~Product.name.ilike("%RTX 6050%"))
+        conditions.append(~Product.name.ilike("%RTX 6060%"))
+        # AMD RX 8000 series doesn't exist
+        conditions.append(~Product.name.ilike("%RX 8000%"))
+        conditions.append(~Product.name.ilike("%RX 8700%"))
+        conditions.append(~Product.name.ilike("%RX 8800%"))
+        conditions.append(~Product.name.ilike("%RX 8900%"))
+
         # Brand filter
         if brand:
             if brand.upper() == "NVIDIA":
@@ -522,10 +543,25 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%внешн%"))
         conditions.append(~Product.name.ilike("%external%"))
         conditions.append(~Product.name.ilike("%portable%"))
+        conditions.append(~Product.name.ilike("%Внешний SSD%"))
+        conditions.append(~Product.name.ilike("%Внешний HDD%"))
 
-        # Exclude server storage
+        # Exclude server storage (CRITICAL: blocks HPE MSA, rack systems, etc.)
         conditions.append(~Product.name.ilike("%сервер%"))
         conditions.append(~Product.name.ilike("%enterprise%"))
+        conditions.append(~Product.name.ilike("%Система хранения%"))
+        conditions.append(~Product.name.ilike("%Storage System%"))
+        conditions.append(~Product.name.ilike("%HPE%"))
+        conditions.append(~Product.name.ilike("%MSA %"))
+        conditions.append(~Product.name.ilike("%MSA2%"))
+        conditions.append(~Product.name.ilike("%Rack%"))
+        conditions.append(~Product.name.ilike("%SAN %"))
+        conditions.append(~Product.name.ilike("%NAS %"))
+        conditions.append(~Product.name.ilike("%iSCSI%"))
+        conditions.append(~Product.name.ilike("%RAID%"))
+        conditions.append(~Product.name.ilike("%JBOD%"))
+        conditions.append(~Product.category.ilike("%Система хранения%"))
+        conditions.append(~Product.category.ilike("%серверн%"))
 
         # CRITICAL: Exclude USB flash drives (they are NOT storage for PC builds)
         conditions.append(~Product.name.ilike("%USB%"))
