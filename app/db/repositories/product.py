@@ -366,19 +366,9 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%Tesla%"))
         conditions.append(~Product.name.ilike("%A100%"))
 
-        # CRITICAL: Exclude non-existent/hallucinated GPU models
-        # RTX 50-series doesn't exist yet (as of Jan 2025)
-        conditions.append(~Product.name.ilike("%RTX 5050%"))
-        conditions.append(~Product.name.ilike("%RTX 5060%"))
-        conditions.append(~Product.name.ilike("%RTX 5070%"))
-        conditions.append(~Product.name.ilike("%RTX 5080%"))
-        conditions.append(~Product.name.ilike("%RTX 5090%"))
-        conditions.append(~Product.name.ilike("%RTX5050%"))
-        conditions.append(~Product.name.ilike("%RTX5060%"))
-        conditions.append(~Product.name.ilike("%RTX5070%"))
-        conditions.append(~Product.name.ilike("%RTX5080%"))
-        conditions.append(~Product.name.ilike("%RTX5090%"))
-        # RTX 60-series also doesn't exist
+        # NOTE: RTX 50-series (5050, 5060, 5070, 5080, 5090) exists - DO NOT block
+        # Only block truly non-existent GPUs
+        # RTX 60-series doesn't exist
         conditions.append(~Product.name.ilike("%RTX 6050%"))
         conditions.append(~Product.name.ilike("%RTX 6060%"))
         # AMD RX 8000 series doesn't exist

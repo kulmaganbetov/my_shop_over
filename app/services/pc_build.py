@@ -80,10 +80,10 @@ def normalize_component_type(component_type: str) -> str:
 # ============================================================================
 
 # Known fake/non-existent products that LLM might hallucinate
+# NOTE: RTX 50-series (5050, 5060, 5070, 5080, 5090) EXISTS - not hallucinated!
 HALLUCINATED_PRODUCTS = [
-    # Fake RTX models
-    "5050", "5060", "5060ti", "5070", "5070ti", "5080", "5090",
-    "6050", "6060",
+    # Fake RTX models (60-series doesn't exist)
+    "6050", "6060", "6070", "6080", "6090",
     # Fake AMD models
     "rx 8000", "rx 8700", "rx 8800", "rx 8900",
     # Fake Intel Arc models
