@@ -750,7 +750,7 @@ class ProductRepository(BaseRepository[Product]):
             select(Product)
             .where(and_(*conditions))
             .order_by(
-                func.coalesce(Product.discount_price, Product.price).desc()
+                func.coalesce(Product.discount_price, Product.price).asc()  # Cheapest first
             )
             .limit(limit)
         )
