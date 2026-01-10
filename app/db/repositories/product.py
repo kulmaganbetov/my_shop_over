@@ -693,22 +693,40 @@ class ProductRepository(BaseRepository[Product]):
         max_price: Optional[int] = None,
         limit: int = 20,
     ) -> List[Product]:
-        """Find CPU coolers.
+        """Find CPU coolers (NOT case fans!).
 
-        CRITICAL: Always filters by stock > 0
-        NOTE: Socket filtering REMOVED - most modern coolers are universal
-              and don't specify socket in the name. Compatibility is checked
-              by mounting kit included with the cooler.
+        CRITICAL: Must return ONLY CPU coolers, not case fans.
         """
         conditions = [
             Product.stock > 0,
             Product.is_active == True,
-            or_(
-                Product.category.ilike("%Кулер%"),
-                Product.category.ilike("%охлажд%"),
-                Product.component_type == "cooler",
-            ),
         ]
+
+        # CRITICAL: Only match CPU coolers, NOT case fans
+        # CPU coolers have "для процессора" or "CPU" or specific cooler brand names
+        cpu_cooler_patterns = or_(
+            Product.name.ilike("%для процессора%"),  # "Кулер для процессора"
+            Product.name.ilike("%CPU Cooler%"),
+            Product.name.ilike("%процессорн%"),  # "процессорный кулер"
+            # Specific CPU cooler brands/series
+            Product.name.ilike("%Deepcool%"),
+            Product.name.ilike("%Noctua%"),
+            Product.name.ilike("%be quiet%"),
+            Product.name.ilike("%Cooler Master%"),
+            Product.name.ilike("%ID-Cooling SE-%"),  # ID-Cooling SE series are CPU coolers
+            Product.name.ilike("%ID-Cooling IS-%"),
+            Product.name.ilike("%ID-Cooling FROSTFLOW%"),
+            Product.name.ilike("%Thermalright%"),
+            Product.name.ilike("%Arctic Freezer%"),
+            Product.name.ilike("%PCcooler%"),
+            Product.name.ilike("%GAMMAXX%"),
+            Product.name.ilike("%Hyper 212%"),
+            Product.name.ilike("%Tower%"),  # Tower coolers
+            Product.name.ilike("%AIO%"),  # All-in-one liquid coolers
+            Product.name.ilike("%водяное охлаждение%"),
+            Product.name.ilike("%жидкостное охлаждение%"),
+        )
+        conditions.append(cpu_cooler_patterns)
 
         # Price filters
         if min_price:
@@ -720,24 +738,28 @@ class ProductRepository(BaseRepository[Product]):
                 func.coalesce(Product.discount_price, Product.price) <= max_price
             )
 
-        # NOTE: Socket filtering DISABLED - universal coolers don't specify socket
-        # Most coolers include mounting kits for all popular sockets (AM4/AM5/LGA1700)
-        # Compatibility is guaranteed by the manufacturer's included hardware
+        # CRITICAL: Exclude case fans and accessories
+        conditions.append(~Product.name.ilike("%для корпуса%"))  # Case fans
+        conditions.append(~Product.name.ilike("%корпусн%"))  # Case fans
+        conditions.append(~Product.name.ilike("%Вентилятор %x%"))  # "Вентилятор 120x120" - case fans
+        conditions.append(~Product.name.ilike("%fan %x%"))  # Case fans by size
+        conditions.append(~Product.name.ilike("Вентилятор 40%"))
+        conditions.append(~Product.name.ilike("Вентилятор 50%"))
+        conditions.append(~Product.name.ilike("Вентилятор 60%"))
+        conditions.append(~Product.name.ilike("Вентилятор 80%"))
+        conditions.append(~Product.name.ilike("Вентилятор 92%"))
+        conditions.append(~Product.name.ilike("Вентилятор 120%"))
+        conditions.append(~Product.name.ilike("Вентилятор 140%"))
 
-        # CRITICAL: Exclude cooler accessories (NOT actual coolers!)
-        # We need Active Coolers (Radiator + Fan), not mounting kits
+        # Exclude accessories
         conditions.append(~Product.name.ilike("%Bracket%"))
         conditions.append(~Product.name.ilike("%крепление%"))
-        conditions.append(~Product.name.ilike("%крепления%"))
         conditions.append(~Product.name.ilike("%Mount%"))
         conditions.append(~Product.name.ilike("%Thermal Paste%"))
         conditions.append(~Product.name.ilike("%термопаст%"))
-        conditions.append(~Product.name.ilike("%Screw%"))
-        conditions.append(~Product.name.ilike("%винт%"))
         conditions.append(~Product.name.ilike("%комплект%"))
         conditions.append(~Product.name.ilike("%Kit%"))
         conditions.append(~Product.name.ilike("%Adapter%"))
-        conditions.append(~Product.name.ilike("%переходник%"))
 
         result = await self.session.execute(
             select(Product)

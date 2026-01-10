@@ -907,37 +907,56 @@ class PCAssemblyEngine:
     async def _find_cooler(
         self, socket: str, max_price: int, cpu_tdp: int = 65
     ) -> Optional[Tuple[Product, CoolerSpecs]]:
-        """Find a CPU cooler compatible with the socket.
+        """Find a CPU cooler.
 
-        NOTE: TDP validation removed per user request - select any cooler by socket/price.
+        CRITICAL: For OEM CPUs, a cooler is REQUIRED. We must find one.
         """
+        # Minimum cooler budget: 5000₸ - don't return garbage fans
+        effective_max = max(max_price, 15000)
+
+        logger.info(f"[COOLER] Looking for CPU cooler, budget: {effective_max:,}₸")
+
         products = await self.repo.find_coolers(
-            socket=socket,
-            max_price=max_price,
-            limit=20,
+            max_price=effective_max,
+            limit=30,
         )
 
         if not products:
+            # Try with higher budget - cooler is essential
+            logger.warning(f"[COOLER] No coolers found, trying with extended budget")
+            products = await self.repo.find_coolers(
+                max_price=50000,  # Up to 50k for cooler
+                limit=30,
+            )
+
+        if not products:
+            logger.error(f"[COOLER] No CPU coolers available in stock!")
             return None
 
-        logger.info(f"[COOLER] Looking for {socket} cooler, budget: {max_price:,}₸")
-
-        # Select cheapest cooler that fits the budget (no TDP filtering)
+        # Filter and score coolers
         valid_coolers = []
         for p in products:
+            name_lower = p.name.lower()
+            # Skip case fans that might have slipped through
+            if any(x in name_lower for x in ["для корпуса", "корпусн", "x40", "x60", "x80"]):
+                continue
+
             cooler_specs = self.extractor.extract_cooler_specs(p.name)
             price = p.discount_price or p.price or 0
-            valid_coolers.append((p, cooler_specs, price))
+
+            # Prefer coolers in the 5000-20000 range for mid-range builds
+            if price >= 3000:  # Minimum price for a real CPU cooler
+                valid_coolers.append((p, cooler_specs, price))
 
         if not valid_coolers:
-            logger.warning(f"[COOLER] No cooler found for {socket} in budget {max_price:,}₸")
+            logger.warning(f"[COOLER] No valid CPU coolers found after filtering")
             return None
 
-        # Sort by price (cheapest first)
+        # Sort by price (cheapest first, but skip ultra-cheap garbage)
         valid_coolers.sort(key=lambda x: x[2])
-        best_product, best_specs, _ = valid_coolers[0]
+        best_product, best_specs, price = valid_coolers[0]
 
-        logger.info(f"[COOLER] Selected: {best_product.name}")
+        logger.info(f"[COOLER] Selected: {best_product.name} ({price:,}₸)")
         return (best_product, best_specs)
 
     # =========================================================================
@@ -1189,14 +1208,28 @@ class PCAssemblyEngine:
 
         elif component_type == "cooler":
             current_price = get_current_price(current_build.cooler) if current_build.cooler else 0
-            min_price, effective_max = apply_price_corridor(current_price, max_price)
+
+            # CRITICAL: For coolers, set minimum price to avoid garbage case fans
+            if current_price > 0:
+                min_price, effective_max = apply_price_corridor(current_price, max_price)
+            else:
+                # No current cooler - use reasonable range for mid-range coolers
+                min_price = 3000  # Minimum 3000₸ for a real CPU cooler
+                effective_max = max_price if max_price else 25000
+
+            logger.info(f"[COOLER ALT] Price range: {min_price} - {effective_max}")
 
             products = await self.repo.find_coolers(
                 min_price=min_price,
                 max_price=effective_max,
                 limit=20,
             )
+
+            # Additional filter - skip case fans
             for p in products:
+                name_lower = p.name.lower()
+                if any(x in name_lower for x in ["для корпуса", "корпусн"]):
+                    continue
                 alternatives.append({
                     "id": p.id,
                     "name": p.name,
