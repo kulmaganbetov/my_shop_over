@@ -374,6 +374,19 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
                 "component_info": context.current_build.get(comp_type)
             }
 
+    # 10.5. CRITICAL: Payment/installment questions with active build
+    # If user asks about рассрочка/цена/оплата and has a build, DON'T search products!
+    payment_keywords = ["рассрочка", "рассрочку", "в рассрочку", "оплата", "оплатить",
+                        "сколько стоит", "сколько будет", "какая цена", "по цене",
+                        "наличными", "картой", "кредит"]
+    if context.has_build() and any(kw in msg_lower for kw in payment_keywords):
+        # This is a question about payment for current build, not a product search
+        return Intent.ASK_QUESTION, {
+            "question": message,
+            "topic": "payment",
+            "current_build": context.current_build
+        }
+
     # 11. Check for product search
     category = detect_category(msg_lower)
     if category or any(kw in msg_lower for kw in INTENT_KEYWORDS[Intent.SEARCH_PRODUCT]):
