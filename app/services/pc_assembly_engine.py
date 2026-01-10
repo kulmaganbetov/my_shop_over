@@ -907,47 +907,37 @@ class PCAssemblyEngine:
     async def _find_cooler(
         self, socket: str, max_price: int, cpu_tdp: int = 65
     ) -> Optional[Tuple[Product, CoolerSpecs]]:
-        """Find a CPU cooler sufficient for the CPU's TDP.
+        """Find a CPU cooler compatible with the socket.
 
-        CRITICAL: Validates that cooler can handle CPU TDP.
-        Prevents dangerous pairings like Intel Laminar RM1 (65W) with i9-12900KF (241W).
+        NOTE: TDP validation removed per user request - select any cooler by socket/price.
         """
         products = await self.repo.find_coolers(
             socket=socket,
             max_price=max_price,
-            limit=20,  # Get more products to filter by TDP
+            limit=20,
         )
 
         if not products:
             return None
 
-        # Calculate required cooler capacity (20% safety margin)
-        required_tdp = int(cpu_tdp * 1.2)
-        logger.info(f"[COOLER] CPU TDP: {cpu_tdp}W, required cooler: {required_tdp}W")
+        logger.info(f"[COOLER] Looking for {socket} cooler, budget: {max_price:,}₸")
 
-        # Filter and score coolers by TDP capability
+        # Select cheapest cooler that fits the budget (no TDP filtering)
         valid_coolers = []
         for p in products:
             cooler_specs = self.extractor.extract_cooler_specs(p.name)
-
-            if cooler_specs.max_tdp >= required_tdp:
-                # Score: prefer coolers closer to required TDP (not overkill)
-                tdp_diff = cooler_specs.max_tdp - required_tdp
-                price = p.discount_price or p.price or 0
-                # Lower score is better: prioritize adequate TDP then price
-                score = tdp_diff * 100 + price
-                valid_coolers.append((p, cooler_specs, score))
+            price = p.discount_price or p.price or 0
+            valid_coolers.append((p, cooler_specs, price))
 
         if not valid_coolers:
-            # No cooler can handle this CPU - warn and return None
-            logger.warning(f"[COOLER] No cooler found for {cpu_tdp}W CPU in budget {max_price:,}₸")
+            logger.warning(f"[COOLER] No cooler found for {socket} in budget {max_price:,}₸")
             return None
 
-        # Sort by score (lower is better)
+        # Sort by price (cheapest first)
         valid_coolers.sort(key=lambda x: x[2])
         best_product, best_specs, _ = valid_coolers[0]
 
-        logger.info(f"[COOLER] Selected: {best_product.name} (max TDP: {best_specs.max_tdp}W)")
+        logger.info(f"[COOLER] Selected: {best_product.name}")
         return (best_product, best_specs)
 
     # =========================================================================
