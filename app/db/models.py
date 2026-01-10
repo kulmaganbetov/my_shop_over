@@ -187,3 +187,23 @@ class ManagerChat(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class SyncStatus(Base):
+    """Track FTP sync status and timing for data freshness."""
+
+    __tablename__ = "sync_status"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    sync_type: Mapped[str] = mapped_column(String(50), unique=True, index=True)  # "ftp_products"
+    last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="idle")  # idle, running, success, failed
+    products_created: Mapped[int] = mapped_column(Integer, default=0)
+    products_updated: Mapped[int] = mapped_column(Integer, default=0)
+    products_zeroed: Mapped[int] = mapped_column(Integer, default=0)  # Products set to stock=0
+    errors: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

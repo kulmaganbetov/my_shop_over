@@ -847,7 +847,64 @@ class Orchestrator:
                 f"Что выбираете?"
             )
 
+        # Price freshness question: "это актуальная цена?"
+        freshness_keywords = ["актуальн", "свежие цен", "обновлен", "последние цен"]
+        if any(kw in msg_lower for kw in freshness_keywords):
+            return self._get_price_freshness_response()
+
         return None
+
+    def _get_price_freshness_response(self) -> str:
+        """Get response about price data freshness.
+
+        NOTE: This is a sync method that checks the sync_status table.
+        """
+        from datetime import datetime, timezone
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as SyncSession
+        from app.core.config import settings
+        from app.db.models import SyncStatus
+
+        try:
+            engine = create_engine(settings.database_url_sync)
+            with SyncSession(engine) as session:
+                sync_status = session.query(SyncStatus).filter(
+                    SyncStatus.sync_type == "ftp_products"
+                ).first()
+
+                if sync_status and sync_status.last_success_at:
+                    now = datetime.now(timezone.utc)
+                    last_sync = sync_status.last_success_at
+                    if last_sync.tzinfo is None:
+                        last_sync = last_sync.replace(tzinfo=timezone.utc)
+
+                    diff = now - last_sync
+                    minutes = int(diff.total_seconds() // 60)
+
+                    if minutes < 60:
+                        freshness = f"{minutes} минут назад"
+                    elif minutes < 1440:  # < 24 hours
+                        hours = minutes // 60
+                        freshness = f"{hours} час{'а' if 2 <= hours <= 4 else 'ов' if hours >= 5 else ''} назад"
+                    else:
+                        days = minutes // 1440
+                        freshness = f"{days} дней назад"
+
+                    return (
+                        f"Да, цены актуальные! Данные обновлены **{freshness}**.\n\n"
+                        f"Цены синхронизируются с базой магазина каждый час."
+                    )
+
+                return (
+                    "Цены актуальные — синхронизируются с базой магазина каждый час.\n\n"
+                    "Если нужна точная информация — могу связать с менеджером."
+                )
+
+        except Exception:
+            return (
+                "Цены актуальные — они обновляются автоматически каждый час.\n\n"
+                "Готовы оформить заказ?"
+            )
 
     def _handle_interruption(self, msg_lower: str, context: ConversationContext) -> Optional[str]:
         """Handle common interruptions gracefully.

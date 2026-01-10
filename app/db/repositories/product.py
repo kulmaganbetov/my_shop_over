@@ -14,12 +14,33 @@ from app.db.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
+# DATA INTEGRITY: Minimum valid price to filter out admin errors
+# Products with price < 100 tenge are likely data entry errors
+MIN_VALID_PRICE = 100
+
 
 class ProductRepository(BaseRepository[Product]):
     """Repository for product operations with vector search and smart queries."""
 
     def __init__(self, session: AsyncSession):
         super().__init__(session, Product)
+
+    def _get_base_conditions(self, in_stock_only: bool = True) -> list:
+        """Get base conditions for all product queries.
+
+        DATA INTEGRITY FILTER: Always filters out:
+        - Inactive products
+        - Products with invalid prices (< 100 tenge)
+        - Optionally: out of stock products
+        """
+        conditions = [
+            Product.is_active == True,
+            # DATA INTEGRITY: Filter out admin price errors
+            func.coalesce(Product.discount_price, Product.price) >= MIN_VALID_PRICE,
+        ]
+        if in_stock_only:
+            conditions.append(Product.stock > 0)
+        return conditions
 
     # =========================================================================
     # BASIC QUERIES
@@ -46,13 +67,15 @@ class ProductRepository(BaseRepository[Product]):
         category: Optional[str] = None,
         in_stock_only: bool = True,
     ) -> List[Product]:
-        """Search products by name using ILIKE."""
-        conditions = [Product.name.ilike(f"%{query}%")]
+        """Search products by name using ILIKE.
+
+        DATA INTEGRITY: Automatically filters out products with invalid prices.
+        """
+        conditions = self._get_base_conditions(in_stock_only)
+        conditions.append(Product.name.ilike(f"%{query}%"))
 
         if category:
             conditions.append(Product.category.ilike(f"%{category}%"))
-        if in_stock_only:
-            conditions.append(Product.stock > 0)
 
         result = await self.session.execute(
             select(Product)
@@ -844,23 +867,25 @@ class ProductRepository(BaseRepository[Product]):
         in_stock_only: bool = True,
         component_type: Optional[str] = None,
     ) -> List[Tuple[Product, float]]:
-        """Search products using vector similarity."""
-        conditions = [Product.is_active == True]
+        """Search products using vector similarity.
+
+        DATA INTEGRITY: Automatically filters out products with invalid prices.
+        """
+        # Use base conditions with price integrity filter
+        conditions = self._get_base_conditions(in_stock_only)
 
         if category:
             conditions.append(Product.category.ilike(f"%{category}%"))
         if min_price is not None and min_price > 0:
             conditions.append(
-                or_(Product.price >= min_price, Product.discount_price >= min_price)
+                func.coalesce(Product.discount_price, Product.price) >= min_price
             )
         if max_price is not None and max_price > 0:
             conditions.append(
-                or_(Product.price <= max_price, Product.discount_price <= max_price)
+                func.coalesce(Product.discount_price, Product.price) <= max_price
             )
         if manufacturer:
             conditions.append(Product.manufacturer.ilike(f"%{manufacturer}%"))
-        if in_stock_only:
-            conditions.append(Product.stock > 0)
         if component_type:
             conditions.append(Product.component_type == component_type)
 
@@ -889,7 +914,10 @@ class ProductRepository(BaseRepository[Product]):
         limit: int = 50,
         search_keywords: List[str] = None,
     ) -> List[Product]:
-        """Get products by component type or category for PC builds."""
+        """Get products by component type or category for PC builds.
+
+        DATA INTEGRITY: Automatically filters out products with invalid prices.
+        """
         type_conditions = [Product.component_type == component_type]
 
         if search_keywords:
@@ -897,10 +925,9 @@ class ProductRepository(BaseRepository[Product]):
                 type_conditions.append(Product.category == kw)
                 type_conditions.append(Product.category.ilike(f"%{kw}%"))
 
-        conditions = [
-            or_(*type_conditions),
-            Product.is_active == True,
-        ]
+        # Use base conditions with price integrity filter
+        conditions = self._get_base_conditions(in_stock_only)
+        conditions.append(or_(*type_conditions))
 
         if min_price is not None and min_price > 0:
             conditions.append(
@@ -910,8 +937,6 @@ class ProductRepository(BaseRepository[Product]):
             conditions.append(
                 func.coalesce(Product.discount_price, Product.price) <= max_price
             )
-        if in_stock_only:
-            conditions.append(Product.stock > 0)
 
         result = await self.session.execute(
             select(Product)

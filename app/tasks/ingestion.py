@@ -4,9 +4,16 @@ DATA PIPELINE FLOW:
 ==================
 1. FTP Connection -> Download CSV file from over-shop.kz FTP server
 2. CSV Parsing -> Convert CSV to pandas DataFrame
-3. Data Normalization -> Clean and transform each row
-4. Database Upsert -> Insert new products or update existing ones
-5. Trigger Embeddings -> Queue embedding generation for new products
+3. Smart Sync -> Only update price/stock if name unchanged (preserve specs!)
+4. Zero Missing -> Products NOT in FTP file get stock = 0
+5. Specs Enrichment -> Extract specs for products with empty specs field
+6. Trigger Embeddings -> Queue embedding generation for new products
+
+SMART SYNC RULES:
+- If product exists AND name matches: only update price, discount_price, stock
+- If product exists AND name changed: update all fields, reset specs for re-parsing
+- If product is new: insert with all fields
+- Products NOT in FTP file: set stock = 0 (so bot doesn't offer them)
 
 This module is triggered by:
 - Celery Beat scheduler (every hour)
@@ -17,18 +24,22 @@ import ftplib
 import io
 import logging
 import re
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Set
 
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import Product
+from app.db.models import Product, SyncStatus
 from app.tasks.celery_app import celery_app
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
+
+# Minimum valid price (filter out admin errors)
+MIN_VALID_PRICE = 100
 
 # Category to component type mapping for PC parts
 COMPONENT_TYPE_MAPPING = {
@@ -42,6 +53,7 @@ COMPONENT_TYPE_MAPPING = {
     "RAM": "Оперативная память",
     "SSD": "SSD накопители",
     "SSD накопители": "SSD накопители",
+    "Твердотельные диски (SSD)": "SSD накопители",
     "Жесткие диски": "Жесткие диски",
     "HDD": "Жесткие диски",
     "Блоки питания": "Блоки питания",
@@ -49,6 +61,7 @@ COMPONENT_TYPE_MAPPING = {
     "Корпуса": "Корпуса",
     "Case": "Корпуса",
     "Кулеры": "Кулеры",
+    "Кулеры для процессоров": "Кулеры",
     "Cooler": "Кулеры",
     "Охлаждение": "Кулеры",
 }
@@ -211,8 +224,8 @@ def normalize_product(row: pd.Series) -> dict:
 
     - Cleans string values
     - Converts numeric values
-    - Extracts specifications from product name
     - Maps category to component type
+    NOTE: Does NOT extract specs here - that's done separately for efficiency
     """
     def clean_number(val, default=0):
         if pd.isna(val):
@@ -247,22 +260,20 @@ def normalize_product(row: pd.Series) -> dict:
             product["component_type"] = component_type
             break
 
-    # Extract specifications from name
-    product["specifications"] = extract_specifications(
-        product["name"],
-        product.get("category", "")
-    )
-
     return product
 
 
 def extract_specifications(name: str, category: str) -> dict:
-    """Extract technical specifications from product name using regex."""
+    """Extract technical specifications from product name using regex.
+
+    CRITICAL: Used for specs enrichment after sync.
+    """
     specs = {}
     name_lower = name.lower()
 
     # CPU Socket detection
     socket_patterns = [
+        (r"lga\s*1851", "LGA1851"),
         (r"lga\s*1700", "LGA1700"),
         (r"lga\s*1200", "LGA1200"),
         (r"lga\s*1151", "LGA1151"),
@@ -289,7 +300,7 @@ def extract_specifications(name: str, category: str) -> dict:
 
     # GPU memory detection
     vram_match = re.search(r"(\d{1,2})\s*gb", name_lower)
-    if vram_match and "видеокарт" in category.lower():
+    if vram_match and ("видеокарт" in category.lower() or "gpu" in category.lower()):
         specs["vram_gb"] = int(vram_match.group(1))
 
     # Storage capacity detection
@@ -306,34 +317,73 @@ def extract_specifications(name: str, category: str) -> dict:
     return specs
 
 
+def update_sync_status(session: Session, sync_type: str, **kwargs):
+    """Update or create sync status record."""
+    existing = session.query(SyncStatus).filter(
+        SyncStatus.sync_type == sync_type
+    ).first()
+
+    if existing:
+        for key, value in kwargs.items():
+            if hasattr(existing, key):
+                setattr(existing, key, value)
+    else:
+        sync_status = SyncStatus(sync_type=sync_type, **kwargs)
+        session.add(sync_status)
+
+    session.commit()
+
+
+def get_sync_status(session: Session, sync_type: str) -> Optional[SyncStatus]:
+    """Get sync status record."""
+    return session.query(SyncStatus).filter(
+        SyncStatus.sync_type == sync_type
+    ).first()
+
+
 @celery_app.task(bind=True, max_retries=3)
 def sync_products_from_ftp(self):
     """
-    MAIN TASK: Sync products from FTP to PostgreSQL.
+    MAIN TASK: Sync products from FTP to PostgreSQL with SMART UPDATE.
+
+    SMART SYNC RULES:
+    1. If SKU exists and name matches: only update price, discount_price, stock (PRESERVE SPECS!)
+    2. If SKU exists and name changed: update all fields, reset specs
+    3. If SKU is new: insert all fields
+    4. All SKUs NOT in FTP file: set stock = 0
 
     This is the main entry point for product synchronization.
     Called by:
     - Celery Beat scheduler (hourly)
     - POST /api/v1/admin/sync/products
-
-    Flow:
-    1. Download CSV from FTP
-    2. Parse CSV to DataFrame
-    3. For each product:
-       - Normalize data
-       - Insert or update in PostgreSQL
-    4. Return statistics
     """
     logger.info("")
     logger.info("*" * 60)
-    logger.info("*  PRODUCT SYNC TASK STARTED")
+    logger.info("*  PRODUCT SYNC TASK STARTED (SMART MODE)")
     logger.info("*" * 60)
     logger.info("")
+
+    engine = create_engine(settings.database_url_sync)
+
+    # Mark sync as started
+    with Session(engine) as session:
+        update_sync_status(
+            session, "ftp_products",
+            status="running",
+            last_sync_at=datetime.now(timezone.utc),
+            error_message=None,
+        )
 
     # STEP 1: Download CSV
     csv_content = download_csv_from_ftp()
     if not csv_content:
         logger.error("Failed to download CSV, will retry in 60 seconds")
+        with Session(engine) as session:
+            update_sync_status(
+                session, "ftp_products",
+                status="failed",
+                error_message="Failed to download CSV from FTP",
+            )
         self.retry(countdown=60)
         return {"status": "error", "message": "Failed to download CSV"}
 
@@ -341,20 +391,30 @@ def sync_products_from_ftp(self):
     df = parse_csv(csv_content)
     if df.empty:
         logger.error("CSV is empty or invalid")
+        with Session(engine) as session:
+            update_sync_status(
+                session, "ftp_products",
+                status="failed",
+                error_message="CSV is empty or invalid",
+            )
         return {"status": "error", "message": "Empty or invalid CSV"}
 
-    # STEP 3 & 4: Normalize and save to database
+    # STEP 3 & 4: SMART SYNC to database
     logger.info("")
     logger.info("=" * 60)
-    logger.info("STEP 3 & 4: SAVING TO POSTGRESQL")
+    logger.info("STEP 3 & 4: SMART SYNC TO POSTGRESQL")
     logger.info("=" * 60)
     logger.info(f"  Database URL: {settings.database_url_sync[:50]}...")
 
-    engine = create_engine(settings.database_url_sync)
-
     created = 0
-    updated = 0
+    updated_price_only = 0
+    updated_full = 0
+    zeroed = 0
+    skipped_invalid_price = 0
     errors = 0
+
+    # Collect all SKUs from FTP file
+    ftp_skus: Set[str] = set()
 
     logger.info(f"  Processing {len(df)} products...")
 
@@ -367,46 +427,121 @@ def sync_products_from_ftp(self):
                     logger.warning(f"    Skipping row {idx}: no SKU")
                     continue
 
+                sku = product_data["sku"]
+                ftp_skus.add(sku)
+
+                # Skip products with invalid price (admin errors)
+                price = product_data.get("price") or product_data.get("discount_price") or 0
+                if price < MIN_VALID_PRICE:
+                    skipped_invalid_price += 1
+                    continue
+
                 # Check if product exists
                 existing = session.query(Product).filter(
-                    Product.sku == product_data["sku"]
+                    Product.sku == sku
                 ).first()
 
                 if existing:
-                    # Update existing product
-                    for key, value in product_data.items():
-                        if hasattr(existing, key):
-                            setattr(existing, key, value)
-                    updated += 1
-                    if updated <= 3:
-                        logger.info(f"    Updated: SKU={product_data['sku']}, Name={product_data['name'][:30]}...")
+                    # SMART UPDATE: Check if name changed
+                    old_name = (existing.name or "").strip()
+                    new_name = (product_data["name"] or "").strip()
+
+                    if old_name == new_name:
+                        # Name unchanged: only update price and stock (PRESERVE SPECS!)
+                        existing.price = product_data["price"]
+                        existing.discount_price = product_data["discount_price"]
+                        existing.stock = product_data["stock"]
+                        existing.is_active = True
+                        updated_price_only += 1
+                        if updated_price_only <= 3:
+                            logger.info(f"    [PRICE] SKU={sku}: price={product_data['price']}, stock={product_data['stock']}")
+                    else:
+                        # Name changed: full update + reset specs for re-parsing
+                        for key, value in product_data.items():
+                            if hasattr(existing, key):
+                                setattr(existing, key, value)
+                        # CRITICAL: Reset specs so enrichment will re-parse
+                        existing.specifications = {}
+                        updated_full += 1
+                        if updated_full <= 3:
+                            logger.info(f"    [FULL] SKU={sku}: name changed, specs reset")
                 else:
-                    # Create new product
+                    # Create new product (specs will be enriched later)
+                    product_data["specifications"] = {}  # Empty, will be enriched
                     product = Product(**product_data)
                     session.add(product)
                     created += 1
                     if created <= 3:
-                        logger.info(f"    Created: SKU={product_data['sku']}, Name={product_data['name'][:30]}...")
+                        logger.info(f"    [NEW] SKU={sku}, Name={product_data['name'][:30]}...")
 
-                # Progress log every 100 items
-                if (idx + 1) % 100 == 0:
+                # Progress log every 500 items
+                if (idx + 1) % 500 == 0:
                     logger.info(f"    Progress: {idx + 1}/{len(df)} processed...")
 
             except Exception as e:
                 logger.error(f"    Error processing row {idx}: {type(e).__name__}: {e}")
                 errors += 1
 
+        # STEP 5: Zero out products NOT in FTP file
+        logger.info("")
+        logger.info("  Setting stock=0 for products not in FTP file...")
+
+        # Find products that exist in DB but not in FTP file
+        existing_skus_result = session.execute(
+            select(Product.sku).where(
+                Product.stock > 0,
+                ~Product.sku.in_(ftp_skus) if ftp_skus else True
+            )
+        )
+        missing_skus = [row[0] for row in existing_skus_result.all()]
+
+        if missing_skus:
+            # Update in batches for efficiency
+            for i in range(0, len(missing_skus), 1000):
+                batch = missing_skus[i:i+1000]
+                session.execute(
+                    update(Product)
+                    .where(Product.sku.in_(batch))
+                    .values(stock=0)
+                )
+            zeroed = len(missing_skus)
+            logger.info(f"  ✓ Zeroed {zeroed} products not in FTP file")
+
         logger.info("  Committing transaction...")
         session.commit()
         logger.info("  ✓ Transaction committed")
+
+        # Update sync status
+        update_sync_status(
+            session, "ftp_products",
+            status="success",
+            last_success_at=datetime.now(timezone.utc),
+            products_created=created,
+            products_updated=updated_price_only + updated_full,
+            products_zeroed=zeroed,
+            errors=errors,
+            error_message=None,
+        )
+
+    # STEP 6: Trigger specs enrichment for products with empty specs
+    logger.info("")
+    logger.info("  Triggering specs enrichment task...")
+    try:
+        enrich_product_specs.delay()
+        logger.info("  ✓ Specs enrichment task queued")
+    except Exception as e:
+        logger.warning(f"  Could not queue enrichment task: {e}")
 
     # Summary
     result = {
         "status": "success",
         "created": created,
-        "updated": updated,
+        "updated_price_only": updated_price_only,
+        "updated_full": updated_full,
+        "zeroed": zeroed,
+        "skipped_invalid_price": skipped_invalid_price,
         "errors": errors,
-        "total": len(df),
+        "total_processed": len(df),
     }
 
     logger.info("")
@@ -414,7 +549,10 @@ def sync_products_from_ftp(self):
     logger.info("SYNC COMPLETED")
     logger.info("=" * 60)
     logger.info(f"  ✓ Created: {created} new products")
-    logger.info(f"  ✓ Updated: {updated} existing products")
+    logger.info(f"  ✓ Updated (price only): {updated_price_only}")
+    logger.info(f"  ✓ Updated (full): {updated_full}")
+    logger.info(f"  ✓ Zeroed (not in FTP): {zeroed}")
+    logger.info(f"  ⚠ Skipped (invalid price): {skipped_invalid_price}")
     logger.info(f"  ✗ Errors: {errors}")
     logger.info(f"  Total processed: {len(df)}")
     logger.info("")
@@ -423,6 +561,80 @@ def sync_products_from_ftp(self):
     logger.info("*" * 60)
 
     return result
+
+
+@celery_app.task
+def enrich_product_specs():
+    """
+    SPECS ENRICHMENT: Parse specs for products with empty specifications.
+
+    Run after sync to extract specs from product names.
+    Critical for: CPUs (socket), Motherboards (socket, RAM type), GPUs (VRAM).
+    """
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("SPECS ENRICHMENT TASK")
+    logger.info("=" * 60)
+
+    engine = create_engine(settings.database_url_sync)
+    enriched = 0
+    marked_invalid = 0
+
+    # Categories that MUST have specs for build compatibility
+    critical_categories = [
+        "Процессоры",
+        "Материнские платы",
+        "Видеокарты",
+        "Оперативная память",
+        "Блоки питания",
+    ]
+
+    with Session(engine) as session:
+        # Find products with empty or null specifications
+        products = session.query(Product).filter(
+            Product.stock > 0,
+            Product.is_active == True,
+            (Product.specifications == None) | (Product.specifications == {})
+        ).limit(1000).all()
+
+        logger.info(f"  Found {len(products)} products needing specs enrichment")
+
+        for product in products:
+            try:
+                specs = extract_specifications(
+                    product.name or "",
+                    product.category or ""
+                )
+
+                if specs:
+                    product.specifications = specs
+                    enriched += 1
+                    if enriched <= 5:
+                        logger.info(f"    Enriched: {product.sku} -> {specs}")
+                else:
+                    # Check if this is a critical category without specs
+                    is_critical = any(
+                        cat.lower() in (product.category or "").lower()
+                        for cat in critical_categories
+                    )
+                    if is_critical:
+                        # Mark as invalid for build (missing critical specs)
+                        product.specifications = {"invalid_for_build": True}
+                        marked_invalid += 1
+                        if marked_invalid <= 5:
+                            logger.info(f"    Marked invalid: {product.sku} (no specs found)")
+
+            except Exception as e:
+                logger.error(f"    Error enriching {product.sku}: {e}")
+
+        session.commit()
+
+    logger.info("")
+    logger.info(f"  ✓ Enriched: {enriched} products")
+    logger.info(f"  ⚠ Marked invalid for build: {marked_invalid} products")
+    logger.info("=" * 60)
+
+    return {"enriched": enriched, "marked_invalid": marked_invalid}
 
 
 @celery_app.task
@@ -453,14 +665,28 @@ def import_products_from_csv(csv_path: str):
             if not product_data["sku"]:
                 continue
 
+            # Skip invalid prices
+            price = product_data.get("price") or product_data.get("discount_price") or 0
+            if price < MIN_VALID_PRICE:
+                continue
+
             existing = session.query(Product).filter(
                 Product.sku == product_data["sku"]
             ).first()
 
             if existing:
-                for key, value in product_data.items():
-                    if hasattr(existing, key):
-                        setattr(existing, key, value)
+                # Smart update
+                if existing.name == product_data["name"]:
+                    # Name unchanged: only price/stock
+                    existing.price = product_data["price"]
+                    existing.discount_price = product_data["discount_price"]
+                    existing.stock = product_data["stock"]
+                else:
+                    # Name changed: full update
+                    for key, value in product_data.items():
+                        if hasattr(existing, key):
+                            setattr(existing, key, value)
+                    existing.specifications = {}
                 updated += 1
             else:
                 product = Product(**product_data)
