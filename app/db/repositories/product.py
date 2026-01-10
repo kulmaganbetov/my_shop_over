@@ -552,6 +552,14 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%JBOD%"))
         conditions.append(~Product.category.ilike("%Система хранения%"))
         conditions.append(~Product.category.ilike("%серверн%"))
+        # CRITICAL: Exclude Data Center / Server SSD series
+        conditions.append(~Product.name.ilike("%SEDC%"))  # Kingston DC series
+        conditions.append(~Product.name.ilike("%DC %"))   # Data Center
+        conditions.append(~Product.name.ilike("% DC%"))   # Data Center
+        conditions.append(~Product.name.ilike("%Datacenter%"))
+        conditions.append(~Product.name.ilike("%PM893%"))  # Samsung enterprise
+        conditions.append(~Product.name.ilike("%PM883%"))  # Samsung enterprise
+        conditions.append(~Product.name.ilike("%SM883%"))  # Samsung enterprise
 
         # CRITICAL: Exclude USB flash drives (they are NOT storage for PC builds)
         conditions.append(~Product.name.ilike("%USB%"))
@@ -561,6 +569,53 @@ class ProductRepository(BaseRepository[Product]):
         conditions.append(~Product.name.ilike("%накопитель USB%"))
         conditions.append(~Product.category.ilike("%Flash%"))
         conditions.append(~Product.category.ilike("%USB%"))
+
+        # Capacity filter using name pattern matching (e.g., "512GB", "1TB")
+        if min_capacity_gb:
+            capacity_patterns = []
+            # Generate patterns for capacities >= min_capacity_gb
+            if min_capacity_gb <= 128:
+                capacity_patterns.extend([
+                    Product.name.ilike("%128Gb%"), Product.name.ilike("%128 Gb%"),
+                ])
+            if min_capacity_gb <= 240:
+                capacity_patterns.extend([
+                    Product.name.ilike("%240Gb%"), Product.name.ilike("%240 Gb%"),
+                    Product.name.ilike("%250Gb%"), Product.name.ilike("%250 Gb%"),
+                    Product.name.ilike("%256Gb%"), Product.name.ilike("%256 Gb%"),
+                ])
+            if min_capacity_gb <= 480:
+                capacity_patterns.extend([
+                    Product.name.ilike("%480Gb%"), Product.name.ilike("%480 Gb%"),
+                    Product.name.ilike("%500Gb%"), Product.name.ilike("%500 Gb%"),
+                    Product.name.ilike("%512Gb%"), Product.name.ilike("%512 Gb%"),
+                ])
+            if min_capacity_gb <= 960:
+                capacity_patterns.extend([
+                    Product.name.ilike("%960Gb%"), Product.name.ilike("%960 Gb%"),
+                    Product.name.ilike("%1000Gb%"), Product.name.ilike("%1000 Gb%"),
+                    Product.name.ilike("%1Tb%"), Product.name.ilike("%1 Tb%"),
+                    Product.name.ilike("%1024Gb%"),
+                ])
+            if min_capacity_gb <= 2000:
+                capacity_patterns.extend([
+                    Product.name.ilike("%2Tb%"), Product.name.ilike("%2 Tb%"),
+                    Product.name.ilike("%2000Gb%"),
+                ])
+            # 4TB and above
+            capacity_patterns.extend([
+                Product.name.ilike("%4Tb%"), Product.name.ilike("%4 Tb%"),
+            ])
+
+            # Only filter if we're looking for specific capacity
+            if min_capacity_gb >= 512:
+                # Exclude small capacity drives
+                conditions.append(~Product.name.ilike("%128Gb%"))
+                conditions.append(~Product.name.ilike("%128 Gb%"))
+                conditions.append(~Product.name.ilike("%240Gb%"))
+                conditions.append(~Product.name.ilike("%240 Gb%"))
+                conditions.append(~Product.name.ilike("%250Gb%"))
+                conditions.append(~Product.name.ilike("%256Gb%"))
 
         result = await self.session.execute(
             select(Product)

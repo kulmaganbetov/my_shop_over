@@ -861,14 +861,35 @@ class PCAssemblyEngine:
             specs = self.extractor.extract_storage_specs(p.name, p.specifications)
             if specs and specs.is_complete and specs.capacity_gb >= min_capacity_gb:
                 valid_products.append((p, specs))
+                logger.debug(f"[STORAGE] Valid: {p.name} ({specs.capacity_gb}GB)")
 
         if not valid_products:
-            # Fallback: try any SSD without capacity filter
-            logger.warning(f"[STORAGE] No SSD >= {min_capacity_gb}GB found, trying any")
-            for p in products:
+            # CRITICAL FIX: Don't fallback to tiny SSDs!
+            # Try with lower budget constraint but keep capacity requirement
+            logger.warning(f"[STORAGE] No SSD >= {min_capacity_gb}GB found in budget, trying wider search")
+
+            # Get more products with higher price limit
+            products_extended = await self.repo.find_storage(
+                max_price=max_price * 2,  # Allow double the budget for storage
+                storage_type="SSD",
+                min_capacity_gb=min_capacity_gb,
+                limit=30,
+            )
+
+            for p in products_extended:
                 specs = self.extractor.extract_storage_specs(p.name, p.specifications)
-                if specs and specs.is_complete:
+                if specs and specs.is_complete and specs.capacity_gb >= min_capacity_gb:
+                    logger.info(f"[STORAGE] Found with extended budget: {p.name} ({specs.capacity_gb}GB)")
                     return (p, specs)
+
+            # Last resort: get AT LEAST 256GB (never go below)
+            if min_capacity_gb > 256:
+                logger.warning(f"[STORAGE] No {min_capacity_gb}GB found, falling back to 256GB minimum")
+                for p in products_extended:
+                    specs = self.extractor.extract_storage_specs(p.name, p.specifications)
+                    if specs and specs.is_complete and specs.capacity_gb >= 256:
+                        return (p, specs)
+
             return None
 
         # Sort by capacity (prefer larger within budget)
@@ -1015,18 +1036,87 @@ class PCAssemblyEngine:
                     })
 
         elif component_type == "storage":
-            products = await self.repo.find_storage(max_price=max_price, limit=10)
+            # CRITICAL FIX: Smart storage alternatives with price range and capacity parsing
+            current_price = 0
+            current_capacity = 0
+            if current_build.storage:
+                current_price = current_build.storage.effective_price()
+                if current_build.storage.specs:
+                    current_capacity = current_build.storage.specs.capacity_gb or 0
+
+            # Parse requested capacity from preference (e.g., "512 GB", "1TB", "1 ТБ")
+            requested_capacity = None
+            if preference:
+                pref_lower = preference.lower()
+                # Parse TB
+                import re
+                tb_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:tb|тб)", pref_lower)
+                gb_match = re.search(r"(\d+)\s*(?:gb|гб)", pref_lower)
+                if tb_match:
+                    requested_capacity = int(float(tb_match.group(1)) * 1000)
+                elif gb_match:
+                    requested_capacity = int(gb_match.group(1))
+
+            # Price range: 0.3x - 5x of current price (allow upgrades)
+            min_price = int(current_price * 0.3) if current_price > 0 else None
+            if max_price is None and current_price > 0:
+                max_price = int(current_price * 5)
+
+            # Capacity filter: use requested or at least current capacity
+            min_capacity = requested_capacity or current_capacity or 256
+
+            logger.info(f"[STORAGE ALT] Current: {current_price:,}₸/{current_capacity}GB, "
+                        f"Requested: {requested_capacity}GB, Price range: {min_price}-{max_price}")
+
+            products = await self.repo.find_storage(
+                min_price=min_price,
+                max_price=max_price,
+                storage_type="SSD",
+                min_capacity_gb=min_capacity,
+                limit=30,  # Get more to filter
+            )
+
+            # Filter and score products
+            valid_products = []
             for p in products:
+                name_lower = (p.name or "").lower()
+
+                # CRITICAL: Skip enterprise/server drives
+                if any(x in name_lower for x in ["enterprise", "server", "hpe", "sedc", "datacenter"]):
+                    continue
+
                 specs = self.extractor.extract_storage_specs(p.name, p.specifications)
-                if specs and specs.is_complete:
-                    alternatives.append({
-                        "id": p.id,
-                        "name": p.name,
-                        "price": p.price,
-                        "discount_price": p.discount_price,
-                        "capacity_gb": specs.capacity_gb,
-                        "type": specs.type,
-                    })
+                if not specs or not specs.is_complete:
+                    continue
+
+                # Must meet capacity requirement
+                if specs.capacity_gb < min_capacity:
+                    continue
+
+                # Score by closeness to requested capacity
+                price = p.discount_price or p.price or 0
+                capacity_diff = abs(specs.capacity_gb - min_capacity) if requested_capacity else 0
+                price_diff = abs(price - current_price) if current_price else price
+
+                # Lower score is better
+                score = capacity_diff * 10 + price_diff / 1000
+
+                valid_products.append((p, specs, score))
+
+            # Sort by score and take top 5
+            valid_products.sort(key=lambda x: x[2])
+
+            for p, specs, _ in valid_products[:5]:
+                alternatives.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                    "capacity_gb": specs.capacity_gb,
+                    "type": specs.type,
+                })
+
+            logger.info(f"[STORAGE ALT] Found {len(alternatives)} alternatives")
 
         elif component_type == "psu":
             cpu_tdp = current_build.cpu.specs.tdp if current_build.cpu and current_build.cpu.specs else 65
