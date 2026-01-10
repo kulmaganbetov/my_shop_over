@@ -140,7 +140,12 @@ INTENT_KEYWORDS = {
     Intent.MODIFY_BUILD: [
         "дороже", "дешевле", "подороже", "подешевле",
         "более дорогую", "более дешевую", "бюджетнее",
-        "слишком дорого"
+        "слишком дорого",
+        # Additional forms (masculine, neuter, plural)
+        "более дорогой", "более дешевый",
+        "более дорогое", "более дешевое",
+        "дешевый", "дорогой", "недорогой",
+        "нужен дешевле", "нужен подешевле",
     ],
     Intent.REPLACE_COMPONENT: [
         "замени", "замена", "поменяй", "смени", "другой", "другую",
@@ -257,7 +262,7 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
             # "слишком дорого" = too expensive = want cheaper (lower)
             # "дешевле" = want cheaper (lower)
             # "дороже" = want more expensive (higher)
-            want_cheaper = ["дешевле", "подешевле", "бюджетнее", "слишком дорого"]
+            want_cheaper = ["дешевле", "подешевле", "бюджетнее", "слишком дорого", "дешевый", "дешевое", "дешевую", "недорогой"]
             modifier = "lower" if any(w in msg_lower for w in want_cheaper) else "higher"
 
             # Apply to last action
