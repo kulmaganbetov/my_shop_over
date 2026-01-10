@@ -951,14 +951,39 @@ class PCAssemblyEngine:
         max_price: Optional[int] = None,
         preference: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get alternative components compatible with current build."""
+        """Get alternative components compatible with current build.
+
+        Price corridor: 0.5x - 2.0x of current component price (unless user specifies budget).
+        """
         alternatives = []
+
+        # Helper to get current component price
+        def get_current_price(comp) -> int:
+            if comp:
+                return comp.effective_price()
+            return 0
+
+        # Apply price corridor if no explicit max_price given
+        def apply_price_corridor(current_price: int, user_max: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+            """Returns (min_price, max_price) based on corridor or user preference."""
+            if user_max:
+                return (None, user_max)  # User specified budget takes priority
+            if current_price > 0:
+                return (int(current_price * 0.5), int(current_price * 2.0))
+            return (None, None)
 
         if component_type == "cpu":
             if current_build.motherboard and current_build.motherboard.specs:
                 socket = current_build.motherboard.specs.socket
                 if socket:
-                    products = await self.repo.find_cpus(max_price=max_price, limit=10)
+                    current_price = get_current_price(current_build.cpu)
+                    min_price, effective_max = apply_price_corridor(current_price, max_price)
+
+                    products = await self.repo.find_cpus(
+                        min_price=min_price,
+                        max_price=effective_max,
+                        limit=20,
+                    )
                     for p in products:
                         specs = self.extractor.extract_cpu_specs(p.name, p.specifications)
                         if specs and specs.socket == socket:
@@ -974,10 +999,14 @@ class PCAssemblyEngine:
             if current_build.cpu and current_build.cpu.specs:
                 socket = current_build.cpu.specs.socket
                 if socket:
+                    current_price = get_current_price(current_build.motherboard)
+                    min_price, effective_max = apply_price_corridor(current_price, max_price)
+
                     products = await self.repo.find_compatible_motherboards(
                         socket=socket.value,
-                        max_price=max_price,
-                        limit=10,
+                        min_price=min_price,
+                        max_price=effective_max,
+                        limit=20,
                     )
                     for p in products:
                         specs = self.extractor.extract_motherboard_specs(p.name, p.specifications)
@@ -995,10 +1024,14 @@ class PCAssemblyEngine:
             if current_build.motherboard and current_build.motherboard.specs:
                 ram_type = current_build.motherboard.specs.ram_type
                 if ram_type:
+                    current_price = get_current_price(current_build.ram)
+                    min_price, effective_max = apply_price_corridor(current_price, max_price)
+
                     products = await self.repo.find_compatible_ram(
                         ram_type=ram_type.value,
-                        max_price=max_price,
-                        limit=10,
+                        min_price=min_price,
+                        max_price=effective_max,
+                        limit=20,
                     )
                     for p in products:
                         specs = self.extractor.extract_ram_specs(p.name, p.specifications)
@@ -1013,7 +1046,14 @@ class PCAssemblyEngine:
                             })
 
         elif component_type == "gpu":
-            products = await self.repo.find_gpus(max_price=max_price, limit=10)
+            current_price = get_current_price(current_build.gpu)
+            min_price, effective_max = apply_price_corridor(current_price, max_price)
+
+            products = await self.repo.find_gpus(
+                min_price=min_price,
+                max_price=effective_max,
+                limit=20,
+            )
             for p in products:
                 specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
                 if specs and specs.is_complete:
@@ -1130,19 +1170,32 @@ class PCAssemblyEngine:
                         "efficiency": specs.efficiency,
                     })
 
-        elif component_type in ["case", "cooler"]:
-            if component_type == "case":
-                products = await self.repo.find_cases(max_price=max_price, limit=10)
-            else:
-                socket = None
-                if current_build.cpu and current_build.cpu.specs:
-                    socket = current_build.cpu.specs.socket
-                products = await self.repo.find_coolers(
-                    socket=socket.value if socket else None,
-                    max_price=max_price,
-                    limit=10,
-                )
+        elif component_type == "case":
+            current_price = get_current_price(current_build.case) if current_build.case else 0
+            min_price, effective_max = apply_price_corridor(current_price, max_price)
 
+            products = await self.repo.find_cases(
+                min_price=min_price,
+                max_price=effective_max,
+                limit=20,
+            )
+            for p in products:
+                alternatives.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "price": p.price,
+                    "discount_price": p.discount_price,
+                })
+
+        elif component_type == "cooler":
+            current_price = get_current_price(current_build.cooler) if current_build.cooler else 0
+            min_price, effective_max = apply_price_corridor(current_price, max_price)
+
+            products = await self.repo.find_coolers(
+                min_price=min_price,
+                max_price=effective_max,
+                limit=20,
+            )
             for p in products:
                 alternatives.append({
                     "id": p.id,

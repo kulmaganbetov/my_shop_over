@@ -476,6 +476,11 @@ class Orchestrator:
             for note in compat_notes:
                 lines.append(f"- {note}")
 
+        # Peripheral suggestion - only if base build is complete and no peripherals yet
+        if build and not peripherals:
+            lines.append("\n---")
+            lines.append("💡 *Нужны ли вам монитор, мышь или гарнитура к этому ПК?*")
+
         return "\n".join(lines)
 
     def _format_alternatives(self, data: dict) -> str:
