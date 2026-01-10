@@ -27,6 +27,7 @@ class ProductSchema(BaseSchema):
     category: Optional[str] = None
     component_type: Optional[str] = None
     specifications: Optional[dict] = None
+    specs_summary: Optional[str] = None  # Human-readable specs summary for bot responses
 
 
 class ProductSearchResult(BaseSchema):

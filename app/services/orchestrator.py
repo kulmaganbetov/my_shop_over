@@ -684,6 +684,7 @@ class Orchestrator:
 
         CRITICAL FIX: Handle interruptions and off-topic messages gracefully.
         Don't act like a robot - be friendly and human-like.
+        CRITICAL FIX #2: Pass full build context so bot knows prices and specs!
         """
         msg_lower = message.lower()
 
@@ -702,46 +703,151 @@ class Orchestrator:
         if interruption_response:
             return interruption_response
 
+        # CRITICAL: Check if user asks about price/payment and has a build
+        # Answer directly without LLM if possible
+        if context.has_build():
+            direct_answer = self._answer_build_question_directly(msg_lower, context)
+            if direct_answer:
+                return direct_answer
+
         # Use LLM for conversational responses
         # CRITICAL: Updated personality - friendly expert, not a robot
         system_prompt = """Ты — дружелюбный эксперт по компьютерной технике в Over-Shop.kz.
+
+🚨 ПРАВИЛО НУЛЕВОГО ОТКАЗА:
+- Ты ОБЯЗАН знать ВСЁ о текущей сборке клиента! Данные есть ниже в BUILD_CONTEXT.
+- НИКОГДА не говори "я не знаю цену", "спросите менеджера", "не могу назвать характеристики"!
+- Если спрашивают цену — посчитай из BUILD_CONTEXT и ответь!
+- Если спрашивают о компоненте — расскажи на основе его названия!
+
+ПОЛИТИКА ЦЕН:
+- Наличными = Картой = discount_price (со скидкой, выгодная цена!)
+- Рассрочка = price (выше, через банк 0-0-12)
 
 ЛИЧНОСТЬ:
 - Ты живой человек, не робот. Отвечай естественно.
 - Если клиент злится — успокой его, пойми его проблему.
 - Если клиент шутит — поддержи шутку, но мягко верни к теме.
-- Если клиент спрашивает о тебе — ответь коротко и верни к делу.
-
-ТВОИ ТЕМЫ:
-- Сборка ПК и подбор комплектующих
-- Поиск товаров из каталога
-- Доставка, оплата, гарантия, адреса магазинов
 
 СТИЛЬ:
-- Краткий, но человечный
+- Краткий, но человечный (2-3 предложения MAX)
 - Уверенный, но не высокомерный
-- Если не знаешь — честно скажи и предложи связаться с менеджером
 
 ЗАПРЕЩЕНО:
 - Длинные лекции
 - Фразы типа "Я — языковая модель" или "Я не могу"
-- Придумывать цены или характеристики товаров
-- Игнорировать эмоции клиента"""
+- Придумывать цены (бери из BUILD_CONTEXT!)
+- Говорить "я не знаю" когда данные есть в BUILD_CONTEXT"""
 
-        # Add context about current state
-        context_hint = ""
-        if context.has_build():
-            total = context.current_build.get("total_price", 0)
-            context_hint = f"\n[У клиента есть сборка ПК на {total:,}₸. Если нужно — предложи изменить компоненты.]"
+        # Build detailed context with all prices
+        build_context = self._format_build_context_for_llm(context)
 
         try:
             return await self.llm_client.complete(
                 system_prompt=system_prompt,
-                user_prompt=f"История: {chat_history}{context_hint}\n\nСообщение клиента: {message}",
+                user_prompt=f"История: {chat_history}\n\n{build_context}\n\nСообщение клиента: {message}",
                 temperature=0.7,
             )
         except Exception:
             return "Чем могу помочь? Подберу комплектующие или найду нужный товар."
+
+    def _format_build_context_for_llm(self, context: ConversationContext) -> str:
+        """Format build context for LLM to use in answers."""
+        if not context.has_build():
+            return "BUILD_CONTEXT: Нет активной сборки."
+
+        build = context.current_build.get("build", {})
+        if not build:
+            return "BUILD_CONTEXT: Нет активной сборки."
+
+        lines = ["BUILD_CONTEXT (ИСПОЛЬЗУЙ ЭТИ ДАННЫЕ ДЛЯ ОТВЕТОВ!):"]
+        total_card = 0
+        total_installment = 0
+
+        component_names = {
+            "cpu": "Процессор",
+            "motherboard": "Мат. плата",
+            "ram": "ОЗУ",
+            "gpu": "Видеокарта",
+            "storage": "Накопитель",
+            "psu": "Блок питания",
+            "case": "Корпус",
+            "cooler": "Кулер",
+        }
+
+        for comp_type, display_name in component_names.items():
+            comp = build.get(comp_type)
+            if comp:
+                name = comp.get("name", "")
+                price = comp.get("price", 0)
+                discount = comp.get("discount_price", 0)
+                specs = comp.get("specs_summary", "")
+                total_card += discount or price
+                total_installment += price
+                line = f"- {display_name}: {name} | Картой/Наличными: {discount:,}₸ | Рассрочка: {price:,}₸"
+                if specs:
+                    line += f" | Характеристики: {specs}"
+                lines.append(line)
+
+        lines.append(f"\nИТОГО КАРТОЙ/НАЛИЧНЫМИ: {total_card:,}₸ (со скидкой!)")
+        lines.append(f"ИТОГО В РАССРОЧКУ: {total_installment:,}₸")
+
+        return "\n".join(lines)
+
+    def _answer_build_question_directly(self, msg_lower: str, context: ConversationContext) -> Optional[str]:
+        """Answer common build questions directly without LLM for speed and accuracy."""
+        build = context.current_build.get("build", {})
+        if not build:
+            return None
+
+        # Calculate totals
+        total_card = 0
+        total_installment = 0
+        for comp in build.values():
+            if isinstance(comp, dict):
+                price = comp.get("price", 0)
+                discount = comp.get("discount_price", 0)
+                total_card += discount or price
+                total_installment += price
+
+        # "сколько наличными" / "сколько картой" / "сколько стоит"
+        cash_keywords = ["наличными", "наличкой", "налом", "наличные"]
+        card_keywords = ["картой", "карта", "безнал"]
+        general_price_keywords = ["сколько стоит", "сколько будет", "какая цена", "цена сборки", "общая цена"]
+
+        if any(kw in msg_lower for kw in cash_keywords):
+            return (
+                f"При оплате наличными ваша сборка обойдётся в **{total_card:,} тенге** — "
+                f"это уже со скидкой!\n\n"
+                f"Хотите оформить заказ или что-то изменить в сборке?"
+            )
+
+        if any(kw in msg_lower for kw in card_keywords) and "рассрочк" not in msg_lower:
+            return (
+                f"При оплате картой ваша сборка обойдётся в **{total_card:,} тенге** — "
+                f"это цена со скидкой!\n\n"
+                f"Готовы оформить или есть вопросы?"
+            )
+
+        # "сколько в рассрочку"
+        installment_keywords = ["рассрочк", "рассрочку", "в рассрочку", "кредит"]
+        if any(kw in msg_lower for kw in installment_keywords):
+            return (
+                f"В рассрочку (0-0-12) ваша сборка выйдет в **{total_installment:,} тенге**.\n\n"
+                f"При оплате картой/наличными — **{total_card:,} тенге** (экономия {total_installment - total_card:,}₸).\n\n"
+                f"Какой вариант оплаты предпочитаете?"
+            )
+
+        # General "сколько стоит"
+        if any(kw in msg_lower for kw in general_price_keywords):
+            return (
+                f"**Стоимость вашей сборки:**\n"
+                f"- Картой/наличными: **{total_card:,} тенге** (со скидкой!)\n"
+                f"- В рассрочку 0-0-12: **{total_installment:,} тенге**\n\n"
+                f"Что выбираете?"
+            )
+
+        return None
 
     def _handle_interruption(self, msg_lower: str, context: ConversationContext) -> Optional[str]:
         """Handle common interruptions gracefully.

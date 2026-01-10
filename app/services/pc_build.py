@@ -75,6 +75,181 @@ def normalize_component_type(component_type: str) -> str:
     return COMPONENT_NAME_MAPPING.get(normalized, normalized)
 
 
+def product_to_schema_with_specs(product, component_type: str) -> ProductSchema:
+    """Convert product to schema with specs_summary populated.
+
+    CRITICAL: This enables the bot to answer questions about component specs!
+    """
+    schema = ProductSchema.model_validate(product)
+    schema.specs_summary = generate_specs_summary(
+        component_type,
+        product.name or "",
+        product.specifications or {}
+    )
+    return schema
+
+
+def generate_specs_summary(component_type: str, product_name: str, specs: dict = None) -> str:
+    """Generate human-readable specs summary from product name and specs.
+
+    CRITICAL: This allows the bot to answer questions about component specs
+    without hallucinating or saying "я не знаю".
+    """
+    import re
+
+    name_lower = product_name.lower()
+    summary_parts = []
+
+    if component_type == "cpu":
+        # Extract CPU info: brand, model, cores, socket
+        if "intel" in name_lower or "core i" in name_lower:
+            if "i9" in name_lower:
+                summary_parts.append("Intel Core i9")
+            elif "i7" in name_lower:
+                summary_parts.append("Intel Core i7")
+            elif "i5" in name_lower:
+                summary_parts.append("Intel Core i5")
+            elif "i3" in name_lower:
+                summary_parts.append("Intel Core i3")
+        elif "ryzen" in name_lower or "amd" in name_lower:
+            if "ryzen 9" in name_lower:
+                summary_parts.append("AMD Ryzen 9")
+            elif "ryzen 7" in name_lower:
+                summary_parts.append("AMD Ryzen 7")
+            elif "ryzen 5" in name_lower:
+                summary_parts.append("AMD Ryzen 5")
+            elif "ryzen 3" in name_lower:
+                summary_parts.append("AMD Ryzen 3")
+
+        # Generation
+        gen_match = re.search(r'i[3579]-?(\d{2})\d{2,3}', name_lower)
+        if gen_match:
+            gen = gen_match.group(1)
+            summary_parts.append(f"{gen} поколение")
+
+        # OEM = needs cooler
+        if "oem" in name_lower:
+            summary_parts.append("OEM (без кулера)")
+        elif "box" in name_lower:
+            summary_parts.append("BOX (с кулером)")
+
+        # F = no iGPU
+        if re.search(r'\d+f\b', name_lower):
+            summary_parts.append("без встроенной графики")
+
+    elif component_type == "gpu":
+        # Extract GPU info: brand, VRAM, memory type
+        # VRAM
+        vram_match = re.search(r'(\d+)\s*(?:gb|гб)', name_lower)
+        if vram_match:
+            summary_parts.append(f"{vram_match.group(1)}GB видеопамяти")
+
+        # Memory type
+        if "gddr7" in name_lower:
+            summary_parts.append("GDDR7")
+        elif "gddr6x" in name_lower:
+            summary_parts.append("GDDR6X")
+        elif "gddr6" in name_lower:
+            summary_parts.append("GDDR6")
+
+        # Series
+        if "rtx 50" in name_lower:
+            summary_parts.append("RTX 50-серия (новейшая)")
+        elif "rtx 40" in name_lower:
+            summary_parts.append("RTX 40-серия")
+        elif "rtx 30" in name_lower:
+            summary_parts.append("RTX 30-серия")
+        elif "rx 7" in name_lower:
+            summary_parts.append("RX 7000-серия")
+        elif "rx 6" in name_lower:
+            summary_parts.append("RX 6000-серия")
+
+        # OC edition
+        if "oc" in name_lower:
+            summary_parts.append("заводской разгон")
+
+    elif component_type == "ram":
+        # Extract RAM info: size, type, speed
+        size_match = re.search(r'(\d+)\s*(?:gb|гб)', name_lower)
+        if size_match:
+            summary_parts.append(f"{size_match.group(1)}GB")
+
+        if "ddr5" in name_lower:
+            summary_parts.append("DDR5")
+        elif "ddr4" in name_lower:
+            summary_parts.append("DDR4")
+
+        speed_match = re.search(r'(\d{4,5})\s*(?:mhz|мгц)?', name_lower)
+        if speed_match:
+            summary_parts.append(f"{speed_match.group(1)}MHz")
+
+    elif component_type == "motherboard":
+        # Extract motherboard info: chipset, form factor, DDR type
+        if "ddr5" in name_lower:
+            summary_parts.append("поддержка DDR5")
+        elif "ddr4" in name_lower:
+            summary_parts.append("поддержка DDR4")
+
+        # Chipset
+        chipsets = ["z790", "z690", "b760", "b660", "h770", "h610",
+                    "x670", "x570", "b650", "b550", "a620", "a520"]
+        for chipset in chipsets:
+            if chipset in name_lower:
+                summary_parts.append(f"чипсет {chipset.upper()}")
+                break
+
+        # Form factor
+        if "mini-itx" in name_lower or "mitx" in name_lower:
+            summary_parts.append("Mini-ITX")
+        elif "micro-atx" in name_lower or "matx" in name_lower or "m-atx" in name_lower:
+            summary_parts.append("Micro-ATX")
+        elif "atx" in name_lower:
+            summary_parts.append("ATX")
+
+    elif component_type == "storage":
+        # Extract storage info: size, type
+        size_match = re.search(r'(\d+)\s*(?:tb|тб)', name_lower)
+        if size_match:
+            summary_parts.append(f"{size_match.group(1)}TB")
+        else:
+            size_match = re.search(r'(\d+)\s*(?:gb|гб)', name_lower)
+            if size_match:
+                summary_parts.append(f"{size_match.group(1)}GB")
+
+        if "nvme" in name_lower or "m.2" in name_lower:
+            summary_parts.append("NVMe M.2 (быстрый)")
+        elif "sata" in name_lower or "2.5" in name_lower:
+            summary_parts.append("SATA SSD")
+
+    elif component_type == "psu":
+        # Extract PSU info: wattage, efficiency
+        watt_match = re.search(r'(\d+)\s*(?:w|вт)', name_lower)
+        if watt_match:
+            summary_parts.append(f"{watt_match.group(1)}W")
+
+        if "80 plus gold" in name_lower or "80+ gold" in name_lower:
+            summary_parts.append("80+ Gold")
+        elif "80 plus bronze" in name_lower or "80+ bronze" in name_lower:
+            summary_parts.append("80+ Bronze")
+        elif "80 plus platinum" in name_lower:
+            summary_parts.append("80+ Platinum")
+
+    elif component_type == "cooler":
+        # Extract cooler info: type, TDP
+        if any(w in name_lower for w in ["водян", "liquid", "aio", "water"]):
+            summary_parts.append("СВО (водяное охлаждение)")
+        else:
+            summary_parts.append("башенный кулер")
+
+        # Socket compatibility
+        if "lga1700" in name_lower or "1700" in name_lower:
+            summary_parts.append("совместим с LGA1700")
+        if "am5" in name_lower or "am4" in name_lower:
+            summary_parts.append("совместим с AM4/AM5")
+
+    return ", ".join(summary_parts) if summary_parts else ""
+
+
 # ============================================================================
 # HALLUCINATION GUARD
 # ============================================================================
@@ -257,7 +432,7 @@ class PCBuildService:
 
         is_oem = False
         if cpu:
-            build["cpu"] = ProductSchema.model_validate(cpu)
+            build["cpu"] = product_to_schema_with_specs(cpu, "cpu")
             total_price += cpu_price
             remaining -= cpu_price
             is_oem = "oem" in (cpu.name or "").lower()
@@ -270,7 +445,7 @@ class PCBuildService:
             cooler_budget = min(int(budget * 0.08), remaining, 30000)
             cooler, cooler_price = await self._select_cooler(cooler_budget, cpu_specs)
             if cooler:
-                build["cooler"] = ProductSchema.model_validate(cooler)
+                build["cooler"] = product_to_schema_with_specs(cooler, "cooler")
                 total_price += cooler_price
                 remaining -= cooler_price
             else:
@@ -283,7 +458,7 @@ class PCBuildService:
         )
 
         if mb:
-            build["motherboard"] = ProductSchema.model_validate(mb)
+            build["motherboard"] = product_to_schema_with_specs(mb, "motherboard")
             total_price += mb_price
             remaining -= mb_price
         else:
@@ -297,7 +472,7 @@ class PCBuildService:
         )
 
         if ram:
-            build["ram"] = ProductSchema.model_validate(ram)
+            build["ram"] = product_to_schema_with_specs(ram, "ram")
             total_price += ram_price
             remaining -= ram_price
         else:
@@ -310,7 +485,7 @@ class PCBuildService:
         gpu, gpu_specs, gpu_price = await self._select_gpu(gpu_budget, purpose)
 
         if gpu:
-            build["gpu"] = ProductSchema.model_validate(gpu)
+            build["gpu"] = product_to_schema_with_specs(gpu, "gpu")
             total_price += gpu_price
             remaining -= gpu_price
         elif purpose == "gaming":
@@ -322,7 +497,7 @@ class PCBuildService:
         psu, psu_specs, psu_price = await self._select_psu(psu_budget, total_tdp)
 
         if psu:
-            build["psu"] = ProductSchema.model_validate(psu)
+            build["psu"] = product_to_schema_with_specs(psu, "psu")
             total_price += psu_price
             remaining -= psu_price
         else:
@@ -333,14 +508,14 @@ class PCBuildService:
         case_product, case_price = await self._select_case(case_budget, gpu_specs)
 
         if case_product:
-            build["case"] = ProductSchema.model_validate(case_product)
+            build["case"] = product_to_schema_with_specs(case_product, "case")
             total_price += case_price
             remaining -= case_price
 
         # === STORAGE ===
         storage, storage_price = await self._select_storage(remaining)
         if storage:
-            build["storage"] = ProductSchema.model_validate(storage)
+            build["storage"] = product_to_schema_with_specs(storage, "storage")
             total_price += storage_price
 
         # Validate compatibility

@@ -374,18 +374,47 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
                 "component_info": context.current_build.get(comp_type)
             }
 
-    # 10.5. CRITICAL: Payment/installment questions with active build
-    # If user asks about рассрочка/цена/оплата and has a build, DON'T search products!
-    payment_keywords = ["рассрочка", "рассрочку", "в рассрочку", "оплата", "оплатить",
-                        "сколько стоит", "сколько будет", "какая цена", "по цене",
-                        "наличными", "картой", "кредит"]
-    if context.has_build() and any(kw in msg_lower for kw in payment_keywords):
-        # This is a question about payment for current build, not a product search
-        return Intent.ASK_QUESTION, {
-            "question": message,
-            "topic": "payment",
-            "current_build": context.current_build
-        }
+    # 10.5. CRITICAL: Build-related questions when user has active build
+    # Route to ASK_QUESTION instead of searching products!
+    if context.has_build():
+        # Payment/price questions
+        payment_keywords = ["рассрочка", "рассрочку", "в рассрочку", "оплата", "оплатить",
+                            "сколько стоит", "сколько будет", "какая цена", "по цене",
+                            "наличными", "картой", "кредит", "наличкой", "налом"]
+        if any(kw in msg_lower for kw in payment_keywords):
+            return Intent.ASK_QUESTION, {
+                "question": message,
+                "topic": "payment",
+                "current_build": context.current_build
+            }
+
+        # Questions about the PC build itself
+        build_question_keywords = [
+            "расскажи об этом", "расскажи о пк", "расскажи о сборке", "об этом пк",
+            "плюсы", "минусы", "плюсы и минусы", "преимущества", "недостатки",
+            "характеристики", "подробнее", "потянет", "пойдет ли", "хватит ли",
+            "для каких игр", "какие игры", "производительность"
+        ]
+        if any(kw in msg_lower for kw in build_question_keywords):
+            return Intent.ASK_QUESTION, {
+                "question": message,
+                "topic": "build_info",
+                "current_build": context.current_build
+            }
+
+        # Questions about specific component in build (without "замени/поменяй")
+        # e.g., "расскажи о видеокарте", "что за процессор", "какая память"
+        component_question_words = ["расскажи о", "что за", "какой", "какая", "какое",
+                                    "информация о", "подробнее о", "об этой", "об этом"]
+        if any(kw in msg_lower for kw in component_question_words):
+            comp_type = detect_component_type(msg_lower)
+            if comp_type and comp_type in context.current_build.get("build", {}):
+                return Intent.ASK_QUESTION, {
+                    "question": message,
+                    "topic": "component_info",
+                    "component_type": comp_type,
+                    "component": context.current_build.get("build", {}).get(comp_type)
+                }
 
     # 11. Check for product search
     category = detect_category(msg_lower)
