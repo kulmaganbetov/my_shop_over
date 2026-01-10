@@ -696,6 +696,9 @@ class ProductRepository(BaseRepository[Product]):
         """Find CPU coolers.
 
         CRITICAL: Always filters by stock > 0
+        NOTE: Socket filtering REMOVED - most modern coolers are universal
+              and don't specify socket in the name. Compatibility is checked
+              by mounting kit included with the cooler.
         """
         conditions = [
             Product.stock > 0,
@@ -717,19 +720,9 @@ class ProductRepository(BaseRepository[Product]):
                 func.coalesce(Product.discount_price, Product.price) <= max_price
             )
 
-        # Socket compatibility - coolers often support multiple sockets
-        if socket:
-            socket_kw = []
-            if socket in ["AM4", "AM5"]:
-                socket_kw = ["AM4", "AM5", "AMD"]
-            elif socket == "LGA1700":
-                socket_kw = ["LGA1700", "1700", "Intel"]
-            elif socket == "LGA1851":
-                socket_kw = ["LGA1851", "1851", "1700", "Intel"]  # 1700 coolers often work
-
-            if socket_kw:
-                socket_conditions = [Product.name.ilike(f"%{kw}%") for kw in socket_kw]
-                conditions.append(or_(*socket_conditions))
+        # NOTE: Socket filtering DISABLED - universal coolers don't specify socket
+        # Most coolers include mounting kits for all popular sockets (AM4/AM5/LGA1700)
+        # Compatibility is guaranteed by the manufacturer's included hardware
 
         # CRITICAL: Exclude cooler accessories (NOT actual coolers!)
         # We need Active Coolers (Radiator + Fan), not mounting kits

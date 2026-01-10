@@ -575,12 +575,12 @@ class PCAssemblyEngine:
                 remaining -= cooler_price
                 result.reasoning.append(f"Cooler: {cooler_product.name} ({cooler_price:,}₸, max TDP: {cooler_specs.max_tdp}W)")
             else:
-                # CRITICAL: Warn if no adequate cooler found
+                # Warn if no cooler found in budget
                 result.issues.append(CompatibilityIssue(
                     severity="warning",
                     component_a="cooler",
                     component_b="cpu",
-                    message=f"Требуется кулер для CPU с TDP {cpu_tdp}W. В наличии нет подходящего."
+                    message=f"Требуется кулер для CPU. Добавьте кулер командой 'добавь кулер'."
                 ))
 
             # Build succeeded

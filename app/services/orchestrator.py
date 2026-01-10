@@ -250,6 +250,7 @@ class Orchestrator:
             return "get_alternatives", {
                 "component_type": params.get("component_type", "gpu"),
                 "preference": params.get("preference"),
+                "budget": params.get("budget"),  # Pass user-specified budget
             }
 
         elif intent == Intent.SELECT_ITEM:

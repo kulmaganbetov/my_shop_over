@@ -149,7 +149,7 @@ INTENT_KEYWORDS = {
     ],
     Intent.REPLACE_COMPONENT: [
         "замени", "замена", "поменяй", "смени", "другой", "другую",
-        "альтернатив", "вместо"
+        "альтернатив", "вместо", "добавь",  # "добавь кулер" = add component to build
     ],
     Intent.ADD_PERIPHERAL: [
         "добавь", "нужен монитор", "нужна мышь", "нужна клавиатура",
@@ -186,6 +186,7 @@ CATEGORY_KEYWORDS = {
     "SSD накопители": ["ssd", "ссд", "накопитель", "nvme"],
     "Блоки питания": ["блок питан", "psu", "бп "],
     "Корпуса": ["корпус", "case", "кейс"],
+    "Кулеры и охлаждение": ["кулер", "охлаждени", "cooler", "радиатор"],  # PC component coolers
     "Мониторы": ["монитор", "дисплей", "экран"],
     "Мыши": ["мышь", "мышк", "mouse"],
     "Клавиатуры": ["клавиатур", "keyboard", "клав"],
@@ -342,9 +343,12 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
             if kw in msg_lower:
                 comp_type = detect_component_type(msg_lower)
                 if comp_type:
+                    # Extract budget from "до 10000", "до 10к", etc.
+                    budget = extract_budget(msg_lower)
                     return Intent.REPLACE_COMPONENT, {
                         "component_type": comp_type,
-                        "preference": extract_preference(msg_lower)
+                        "preference": extract_preference(msg_lower),
+                        "budget": budget,
                     }
 
     # 9. Check for add peripheral
