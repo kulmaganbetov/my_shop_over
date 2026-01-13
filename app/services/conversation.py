@@ -59,6 +59,10 @@ class ConversationContext:
     current_build: Optional[dict] = None
     original_budget: int = 0
 
+    # Pending build (when showing preset options)
+    pending_build_budget: int = 0
+    pending_build_purpose: str = ""
+
     # Last shown items for continuation
     last_shown_products: list = field(default_factory=list)
     last_search_query: str = ""
@@ -77,6 +81,8 @@ class ConversationContext:
             "last_action": self.last_action.value,
             "current_build": self.current_build,
             "original_budget": self.original_budget,
+            "pending_build_budget": self.pending_build_budget,
+            "pending_build_purpose": self.pending_build_purpose,
             "last_shown_products": self.last_shown_products,
             "last_search_query": self.last_search_query,
             "last_alternatives": self.last_alternatives,
@@ -96,6 +102,8 @@ class ConversationContext:
             last_action=LastAction(data.get("last_action", "none")),
             current_build=data.get("current_build"),
             original_budget=data.get("original_budget", 0),
+            pending_build_budget=data.get("pending_build_budget", 0),
+            pending_build_purpose=data.get("pending_build_purpose", ""),
             last_shown_products=data.get("last_shown_products", []),
             last_search_query=data.get("last_search_query", ""),
             last_alternatives=data.get("last_alternatives", []),
@@ -319,24 +327,43 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
             return Intent.SHOW_BUILD, {}
 
     # 7. Check for preset platform selection (Intel/AMD/Workstation)
-    # This happens after bot shows preset options
-    preset_selection_keywords = {
-        "Intel Gaming": ["intel", "интел", "core"],
-        "AMD Gaming": ["amd", "амд", "ryzen", "райзен"],
-        "Intel Workstation": ["для работы", "workstation", "рабочая", "профессиональн"],
-        "AMD Workstation": ["для работы amd", "amd workstation"],
-        "Intel Office": ["офисн", "office"],
-    }
+    # This happens after bot shows preset options and user selects a platform
+    # CRITICAL: Check if there's a pending build budget (means preset options were shown)
+    if context.pending_build_budget > 0:
+        preset_selection_keywords = {
+            "Intel Gaming": ["intel", "интел", "core i", "покажи intel", "давай intel"],
+            "AMD Gaming": ["amd", "амд", "ryzen", "райзен", "покажи amd", "давай amd"],
+            "Intel Workstation": ["для работы intel", "рабочую intel"],
+            "AMD Workstation": ["для работы amd", "рабочую amd"],
+            "Intel Office": ["офисн intel"],
+            "AMD Office": ["офисн amd"],
+        }
 
-    # Check if there are pending preset options
-    if hasattr(context, 'intent_history') and context.intent_history:
-        last_intent = context.intent_history[-1] if context.intent_history else ""
-        # If last action was build_pc and user is selecting platform
-        for category_tag, keywords in preset_selection_keywords.items():
-            if any(kw in msg_lower for kw in keywords):
-                # User is selecting a platform
-                budget = extract_budget(msg_lower) or context.original_budget or 500000
-                return Intent.BUILD_PC, {"budget": budget, "category_tag": category_tag}
+        # Also check for simple platform keywords
+        if any(kw in msg_lower for kw in ["intel", "интел"]):
+            purpose = context.pending_build_purpose or "gaming"
+            category = f"Intel {'Workstation' if 'работ' in purpose else 'Gaming'}"
+            return Intent.BUILD_PC, {
+                "budget": context.pending_build_budget,
+                "category_tag": category,
+                "purpose": purpose
+            }
+
+        if any(kw in msg_lower for kw in ["amd", "амд", "ryzen", "райзен"]):
+            purpose = context.pending_build_purpose or "gaming"
+            category = f"AMD {'Workstation' if 'работ' in purpose else 'Gaming'}"
+            return Intent.BUILD_PC, {
+                "budget": context.pending_build_budget,
+                "category_tag": category,
+                "purpose": purpose
+            }
+
+        if any(kw in msg_lower for kw in ["для работы", "workstation", "рабочая", "рабочую"]):
+            return Intent.BUILD_PC, {
+                "budget": context.pending_build_budget,
+                "category_tag": "Intel Workstation",  # Default to Intel for workstation
+                "purpose": "workstation"
+            }
 
     # 8. Check for PC build request
     build_score = 0
