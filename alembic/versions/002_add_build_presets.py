@@ -1,9 +1,11 @@
 """Add build_presets table for Smart Presets system.
 
 Revision ID: 002_add_build_presets
-Revises: 001_add_admin, 001_add_session_status
+Revises:
 Create Date: 2025-01-13
 
+NOTE: This migration has no down_revision because it may be applied after
+various merge states. It's designed to be idempotent - checks if tables exist.
 """
 from typing import Sequence, Union
 
@@ -14,8 +16,8 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '002_add_build_presets'
-down_revision: Union[str, Sequence[str], None] = ('001_add_admin', '001_add_session_status')
-branch_labels: Union[str, Sequence[str], None] = None
+down_revision: Union[str, None] = None  # Will be merged manually
+branch_labels: Union[str, Sequence[str], None] = ('presets',)
 depends_on: Union[str, Sequence[str], None] = None
 
 
