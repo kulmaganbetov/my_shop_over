@@ -20,17 +20,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add status and escalation_reason columns to chat_sessions table."""
-    # Add status column with default 'bot'
-    op.add_column(
-        'chat_sessions',
-        sa.Column('status', sa.String(20), nullable=False, server_default='bot')
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('chat_sessions')]
 
-    # Add escalation_reason column (nullable)
-    op.add_column(
-        'chat_sessions',
-        sa.Column('escalation_reason', sa.Text(), nullable=True)
-    )
+    # Add status column with default 'bot' (if not exists)
+    if 'status' not in columns:
+        op.add_column(
+            'chat_sessions',
+            sa.Column('status', sa.String(20), nullable=False, server_default='bot')
+        )
+
+    # Add escalation_reason column (nullable, if not exists)
+    if 'escalation_reason' not in columns:
+        op.add_column(
+            'chat_sessions',
+            sa.Column('escalation_reason', sa.Text(), nullable=True)
+        )
 
 
 def downgrade() -> None:
