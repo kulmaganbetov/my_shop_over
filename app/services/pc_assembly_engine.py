@@ -1,10 +1,21 @@
-"""PC Assembly Engine - Smart PC builder with backtracking.
+"""PC Assembly Engine - Smart Presets System.
 
-This module implements deterministic PC assembly with:
-1. Chain of Constraints - step-by-step compatible selection
-2. Backtracking - if a component fails, try alternative paths
-3. Budget Balancer - smart allocation based on purpose
-4. Database-driven compatibility - uses repository JSONB queries
+This module implements the Smart Presets PC assembly with:
+1. Expert-curated presets for each budget segment
+2. Real-time stock checking and component replacement
+3. Compatibility validation via specs extraction
+4. Budget adaptation within ±10% range
+
+NEW FLOW (Smart Presets):
+1. User requests build with budget
+2. Engine finds presets in ±10% budget range
+3. Bot asks: "Intel, AMD или решение для работы?"
+4. User selects category
+5. Engine loads preset, checks stock, replaces missing components
+6. Returns complete build with real prices
+
+LEGACY FLOW (still supported):
+- Direct build_pc() method for backward compatibility
 """
 
 import logging
@@ -12,9 +23,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product
+from app.db.models import Product, BuildPreset
 from app.db.repositories.product import ProductRepository
 from app.services.specs_extractor import (
     SpecsExtractor, Socket, RAMType, Tier, FormFactor,
@@ -216,13 +228,375 @@ class BudgetBalancer:
 # ============================================================================
 
 class PCAssemblyEngine:
-    """Smart PC assembly engine with backtracking."""
+    """Smart PC assembly engine with presets system."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = ProductRepository(session)
         self.extractor = SpecsExtractor()
         self.balancer = BudgetBalancer()
+
+    # =========================================================================
+    # SMART PRESETS SYSTEM
+    # =========================================================================
+
+    async def get_preset_options(self, budget: int) -> Dict[str, Any]:
+        """Get available preset options for a budget.
+
+        Returns categories and counts for user to choose from.
+        Budget tolerance: ±10%
+
+        Returns:
+            {
+                "budget": 500000,
+                "categories": ["Intel Gaming", "AMD Gaming", "Workstation"],
+                "counts": {"Intel Gaming": 3, "AMD Gaming": 3, "Workstation": 2},
+                "total_presets": 8,
+                "message": "Для бюджета 500,000₸ у меня есть 8 проверенных конфигураций..."
+            }
+        """
+        min_budget = int(budget * 0.9)
+        max_budget = int(budget * 1.1)
+
+        # Find presets in budget range
+        query = select(BuildPreset).where(
+            and_(
+                BuildPreset.is_active == True,
+                BuildPreset.target_budget >= min_budget,
+                BuildPreset.target_budget <= max_budget,
+            )
+        ).order_by(BuildPreset.priority.desc())
+
+        result = await self.session.execute(query)
+        presets = result.scalars().all()
+
+        if not presets:
+            # Try wider range
+            min_budget = int(budget * 0.7)
+            max_budget = int(budget * 1.3)
+            query = select(BuildPreset).where(
+                and_(
+                    BuildPreset.is_active == True,
+                    BuildPreset.target_budget >= min_budget,
+                    BuildPreset.target_budget <= max_budget,
+                )
+            ).order_by(BuildPreset.priority.desc())
+            result = await self.session.execute(query)
+            presets = result.scalars().all()
+
+        # Group by category
+        categories = {}
+        for preset in presets:
+            cat = preset.category_tag
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(preset)
+
+        # Build response
+        category_list = list(categories.keys())
+        counts = {cat: len(presets_list) for cat, presets_list in categories.items()}
+
+        # Generate user-friendly message
+        total = len(presets)
+        if total > 0:
+            intel_count = sum(1 for p in presets if "Intel" in p.category_tag)
+            amd_count = sum(1 for p in presets if "AMD" in p.category_tag)
+            work_count = sum(1 for p in presets if "Workstation" in p.category_tag or "Office" in p.category_tag)
+
+            message = f"Для бюджета {budget:,}₸ у меня есть {total} проверенных конфигураций.\n"
+            if intel_count > 0:
+                message += f"• Intel: {intel_count} вариант{'а' if 2 <= intel_count <= 4 else 'ов'}\n"
+            if amd_count > 0:
+                message += f"• AMD: {amd_count} вариант{'а' if 2 <= amd_count <= 4 else 'ов'}\n"
+            if work_count > 0:
+                message += f"• Для работы: {work_count} вариант{'а' if 2 <= work_count <= 4 else 'ов'}\n"
+            message += "\nЧто выберем: Intel, AMD или решение для работы?"
+        else:
+            message = f"К сожалению, для бюджета {budget:,}₸ нет готовых конфигураций. Попробуйте изменить бюджет."
+
+        return {
+            "budget": budget,
+            "categories": category_list,
+            "counts": counts,
+            "total_presets": total,
+            "presets": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "category_tag": p.category_tag,
+                    "purpose": p.purpose,
+                    "description": p.description,
+                    "target_budget": p.target_budget,
+                }
+                for p in presets
+            ],
+            "message": message,
+        }
+
+    async def build_from_preset(
+        self,
+        preset_id: Optional[int] = None,
+        category_tag: Optional[str] = None,
+        budget: Optional[int] = None,
+    ) -> BuildResult:
+        """Build PC from a preset, checking stock and replacing missing components.
+
+        Args:
+            preset_id: Specific preset ID to use
+            category_tag: Category to filter by (e.g., "Intel Gaming")
+            budget: Budget to find preset for
+
+        Returns:
+            BuildResult with components or error
+        """
+        result = BuildResult(success=False)
+
+        # Find the preset
+        preset = None
+        if preset_id:
+            query = select(BuildPreset).where(BuildPreset.id == preset_id)
+            res = await self.session.execute(query)
+            preset = res.scalar_one_or_none()
+        elif category_tag and budget:
+            min_budget = int(budget * 0.9)
+            max_budget = int(budget * 1.1)
+            query = select(BuildPreset).where(
+                and_(
+                    BuildPreset.is_active == True,
+                    BuildPreset.category_tag.ilike(f"%{category_tag}%"),
+                    BuildPreset.target_budget >= min_budget,
+                    BuildPreset.target_budget <= max_budget,
+                )
+            ).order_by(BuildPreset.priority.desc()).limit(1)
+            res = await self.session.execute(query)
+            preset = res.scalar_one_or_none()
+
+        if not preset:
+            result.error_message = "Пресет не найден. Попробуйте выбрать другую категорию."
+            return result
+
+        result.reasoning.append(f"Выбран пресет: {preset.name}")
+        result.reasoning.append(f"Описание: {preset.description}")
+
+        # Load components from preset
+        components_skus = preset.components  # {"cpu": "SKU123", "gpu": "SKU456", ...}
+
+        # Check each component in stock
+        for comp_type, sku in components_skus.items():
+            if not sku:
+                continue
+
+            # Find product by SKU
+            query = select(Product).where(
+                and_(
+                    Product.sku == sku,
+                    Product.is_active == True,
+                )
+            )
+            res = await self.session.execute(query)
+            product = res.scalar_one_or_none()
+
+            if product and product.stock > 0:
+                # Product in stock - use it
+                component = await self._create_component(product, comp_type)
+                setattr(result, comp_type, component)
+                result.reasoning.append(f"✓ {comp_type}: {product.name} (в наличии)")
+            else:
+                # Product not in stock - find replacement
+                result.reasoning.append(f"✗ {comp_type}: {sku} нет в наличии, ищем замену...")
+                replacement = await self._find_replacement(
+                    comp_type=comp_type,
+                    original_sku=sku,
+                    target_price=preset.target_budget * self._get_component_allocation(comp_type, preset.purpose),
+                    result=result,
+                )
+                if replacement:
+                    setattr(result, comp_type, replacement)
+                    result.reasoning.append(f"→ Замена: {replacement.name}")
+                else:
+                    result.issues.append(CompatibilityIssue(
+                        severity="warning",
+                        component_a=comp_type,
+                        component_b="",
+                        message=f"Компонент {comp_type} временно недоступен",
+                    ))
+
+        # Validate build
+        if result.cpu and result.motherboard and result.ram:
+            result.success = True
+            result.reasoning.append(f"Сборка готова! Итого: {result.total_price():,}₸")
+        else:
+            result.error_message = "Не удалось собрать ПК: недостаточно компонентов в наличии"
+
+        return result
+
+    def _get_component_allocation(self, comp_type: str, purpose: str) -> float:
+        """Get budget allocation percentage for component type."""
+        allocations = {
+            "gaming": {"cpu": 0.18, "motherboard": 0.10, "ram": 0.10, "gpu": 0.45, "psu": 0.06, "case": 0.05, "storage": 0.04, "cooler": 0.02},
+            "office": {"cpu": 0.25, "motherboard": 0.15, "ram": 0.15, "gpu": 0.05, "psu": 0.10, "case": 0.12, "storage": 0.15, "cooler": 0.03},
+            "workstation": {"cpu": 0.30, "motherboard": 0.12, "ram": 0.20, "gpu": 0.10, "psu": 0.08, "case": 0.07, "storage": 0.10, "cooler": 0.03},
+        }
+        return allocations.get(purpose, allocations["gaming"]).get(comp_type, 0.1)
+
+    async def _create_component(self, product: Product, comp_type: str) -> BuildComponent:
+        """Create BuildComponent from Product."""
+        specs = None
+        if comp_type == "cpu":
+            specs = self.extractor.extract_cpu_specs(product.name, product.specifications)
+        elif comp_type == "motherboard":
+            specs = self.extractor.extract_motherboard_specs(product.name, product.specifications)
+        elif comp_type == "ram":
+            specs = self.extractor.extract_ram_specs(product.name, product.specifications)
+        elif comp_type == "gpu":
+            specs = self.extractor.extract_gpu_specs(product.name, product.specifications)
+        elif comp_type == "psu":
+            specs = self.extractor.extract_psu_specs(product.name, product.specifications)
+        elif comp_type == "storage":
+            specs = self.extractor.extract_storage_specs(product.name, product.specifications)
+        elif comp_type == "cooler":
+            specs = self.extractor.extract_cooler_specs(product.name)
+
+        return BuildComponent(
+            product_id=product.id,
+            name=product.name,
+            price=product.price or 0,
+            discount_price=product.discount_price or 0,
+            specs=specs,
+            component_type=comp_type,
+        )
+
+    async def _find_replacement(
+        self,
+        comp_type: str,
+        original_sku: str,
+        target_price: int,
+        result: BuildResult,
+    ) -> Optional[BuildComponent]:
+        """Find replacement component when original is out of stock.
+
+        Maintains compatibility with existing build.
+        """
+        # Get original product info for reference
+        query = select(Product).where(Product.sku == original_sku)
+        res = await self.session.execute(query)
+        original = res.scalar_one_or_none()
+
+        original_specs = None
+        if original:
+            original_price = original.discount_price or original.price or target_price
+
+            if comp_type == "cpu":
+                original_specs = self.extractor.extract_cpu_specs(original.name, original.specifications)
+            elif comp_type == "motherboard":
+                original_specs = self.extractor.extract_motherboard_specs(original.name, original.specifications)
+            elif comp_type == "ram":
+                original_specs = self.extractor.extract_ram_specs(original.name, original.specifications)
+            elif comp_type == "gpu":
+                original_specs = self.extractor.extract_gpu_specs(original.name, original.specifications)
+        else:
+            original_price = target_price
+
+        # Find replacement based on component type
+        min_price = int(original_price * 0.7)
+        max_price = int(original_price * 1.3)
+
+        if comp_type == "cpu":
+            # Match socket if motherboard is already selected
+            socket = None
+            if result.motherboard and result.motherboard.specs:
+                socket = result.motherboard.specs.socket
+            elif original_specs and hasattr(original_specs, 'socket'):
+                socket = original_specs.socket
+
+            products = await self.repo.find_cpus(min_price=min_price, max_price=max_price, limit=10)
+            for p in products:
+                specs = self.extractor.extract_cpu_specs(p.name, p.specifications)
+                if specs and (not socket or specs.socket == socket):
+                    return await self._create_component(p, comp_type)
+
+        elif comp_type == "motherboard":
+            # Match socket if CPU is already selected
+            socket = None
+            if result.cpu and result.cpu.specs:
+                socket = result.cpu.specs.socket.value if result.cpu.specs.socket else None
+            elif original_specs and hasattr(original_specs, 'socket'):
+                socket = original_specs.socket.value if original_specs.socket else None
+
+            if socket:
+                products = await self.repo.find_compatible_motherboards(
+                    socket=socket, min_price=min_price, max_price=max_price, limit=10
+                )
+                for p in products:
+                    specs = self.extractor.extract_motherboard_specs(p.name, p.specifications)
+                    if specs and specs.is_complete:
+                        return await self._create_component(p, comp_type)
+
+        elif comp_type == "ram":
+            # Match RAM type with motherboard
+            ram_type = None
+            if result.motherboard and result.motherboard.specs:
+                ram_type = result.motherboard.specs.ram_type.value if result.motherboard.specs.ram_type else None
+            elif original_specs and hasattr(original_specs, 'ram_type'):
+                ram_type = original_specs.ram_type.value if original_specs.ram_type else None
+
+            if ram_type:
+                products = await self.repo.find_compatible_ram(
+                    ram_type=ram_type, min_price=min_price, max_price=max_price, limit=10
+                )
+                for p in products:
+                    specs = self.extractor.extract_ram_specs(p.name, p.specifications)
+                    if specs and specs.is_complete:
+                        return await self._create_component(p, comp_type)
+
+        elif comp_type == "gpu":
+            products = await self.repo.find_gpus(min_price=min_price, max_price=max_price, limit=10)
+            for p in products:
+                specs = self.extractor.extract_gpu_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    return await self._create_component(p, comp_type)
+
+        elif comp_type == "psu":
+            # Calculate required wattage
+            min_wattage = 500
+            if result.cpu and result.cpu.specs:
+                min_wattage += result.cpu.specs.tdp or 65
+            if result.gpu and result.gpu.specs:
+                min_wattage += result.gpu.specs.tdp or 150
+
+            products = await self.repo.find_psus(min_wattage=min_wattage, max_price=max_price, limit=10)
+            for p in products:
+                specs = self.extractor.extract_psu_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    return await self._create_component(p, comp_type)
+
+        elif comp_type == "storage":
+            products = await self.repo.find_storage(
+                min_price=min_price, max_price=max_price, storage_type="SSD", limit=10
+            )
+            for p in products:
+                specs = self.extractor.extract_storage_specs(p.name, p.specifications)
+                if specs and specs.is_complete:
+                    return await self._create_component(p, comp_type)
+
+        elif comp_type == "case":
+            products = await self.repo.find_cases(min_price=min_price, max_price=max_price, limit=10)
+            if products:
+                return await self._create_component(products[0], comp_type)
+
+        elif comp_type == "cooler":
+            products = await self.repo.find_coolers(min_price=min_price, max_price=max_price, limit=10)
+            for p in products:
+                name_lower = p.name.lower()
+                if "для корпуса" not in name_lower and "корпусн" not in name_lower:
+                    specs = self.extractor.extract_cooler_specs(p.name)
+                    return await self._create_component(p, comp_type)
+
+        return None
+
+    # =========================================================================
+    # LEGACY BUILD METHOD (backward compatibility)
+    # =========================================================================
 
     @staticmethod
     def _select_by_target_price(

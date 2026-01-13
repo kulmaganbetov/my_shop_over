@@ -100,21 +100,37 @@ class FAQDocument(Base):
     )
 
 
-class PCPreset(Base):
-    """Predefined PC build presets."""
+class BuildPreset(Base):
+    """Expert PC build presets - Smart Presets system.
 
-    __tablename__ = "pc_presets"
+    Each preset is a curated configuration for a specific budget segment,
+    with real SKUs from our product database.
+    """
+
+    __tablename__ = "build_presets"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    purpose: Mapped[str] = mapped_column(String(100), index=True)
-    budget_min: Mapped[int] = mapped_column(Integer)
-    budget_max: Mapped[int] = mapped_column(Integer)
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)  # "Intel Core Gaming 500K"
+    target_budget: Mapped[int] = mapped_column(Integer, index=True)  # 500000
+    category_tag: Mapped[str] = mapped_column(String(50), index=True)  # "Intel", "AMD", "Workstation", "Budget"
+    purpose: Mapped[str] = mapped_column(String(50), index=True, default="gaming")  # gaming, office, workstation
+
+    # JSONB with component SKUs: {"cpu": "SKU123", "gpu": "SKU456", ...}
     components: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    description: Mapped[str] = mapped_column(Text, nullable=False)  # "Отличный выбор для 1080p гейминга"
+    priority: Mapped[int] = mapped_column(Integer, default=0)  # Higher = shown first
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_build_presets_budget_category", "target_budget", "category_tag"),
     )
 
 

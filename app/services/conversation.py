@@ -318,7 +318,27 @@ def detect_intent_from_keywords(message: str, context: ConversationContext) -> t
         if kw in msg_lower:
             return Intent.SHOW_BUILD, {}
 
-    # 7. Check for PC build request
+    # 7. Check for preset platform selection (Intel/AMD/Workstation)
+    # This happens after bot shows preset options
+    preset_selection_keywords = {
+        "Intel Gaming": ["intel", "интел", "core"],
+        "AMD Gaming": ["amd", "амд", "ryzen", "райзен"],
+        "Intel Workstation": ["для работы", "workstation", "рабочая", "профессиональн"],
+        "AMD Workstation": ["для работы amd", "amd workstation"],
+        "Intel Office": ["офисн", "office"],
+    }
+
+    # Check if there are pending preset options
+    if hasattr(context, 'intent_history') and context.intent_history:
+        last_intent = context.intent_history[-1] if context.intent_history else ""
+        # If last action was build_pc and user is selecting platform
+        for category_tag, keywords in preset_selection_keywords.items():
+            if any(kw in msg_lower for kw in keywords):
+                # User is selecting a platform
+                budget = extract_budget(msg_lower) or context.original_budget or 500000
+                return Intent.BUILD_PC, {"budget": budget, "category_tag": category_tag}
+
+    # 8. Check for PC build request
     build_score = 0
     for kw in INTENT_KEYWORDS[Intent.BUILD_PC]:
         if kw in msg_lower:

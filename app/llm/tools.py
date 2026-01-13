@@ -44,7 +44,8 @@ TOOLS = [
     {
         "name": "build_pc",
         "description": "Собрать конфигурацию ПК под указанный бюджет и назначение. "
-                       "Используй для запросов: 'собери пк', 'хочу сборку', 'нужен компьютер для игр'.",
+                       "Используй для запросов: 'собери пк', 'хочу сборку', 'нужен компьютер для игр'. "
+                       "ВАЖНО: Если пользователь выбирает платформу (Intel/AMD/рабочая), передай category_tag!",
         "parameters": {
             "type": "object",
             "properties": {
@@ -56,6 +57,11 @@ TOOLS = [
                     "type": "string",
                     "enum": ["gaming", "office", "work", "streaming", "general"],
                     "description": "Назначение ПК: gaming (игры), office (офис), work (работа/дизайн), streaming, general"
+                },
+                "category_tag": {
+                    "type": "string",
+                    "description": "Выбранная категория пресета: 'Intel Gaming', 'AMD Gaming', 'Intel Workstation', 'AMD Workstation', 'Intel Office', 'AMD Office'. "
+                                   "Передавай когда пользователь выбрал платформу: 'Intel' -> 'Intel Gaming', 'AMD' -> 'AMD Gaming', 'для работы' -> 'Intel Workstation'"
                 }
             },
             "required": []

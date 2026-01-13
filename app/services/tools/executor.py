@@ -196,23 +196,23 @@ class ToolExecutor:
                     return category
         return None
 
-    # ===== PC Build (Using PCAssemblyEngine - Zero Hallucination) =====
+    # ===== PC Build (Smart Presets System) =====
 
     async def _tool_build_pc(self, params: dict, session_id: str) -> dict:
-        """Build a PC configuration using PCAssemblyEngine.
+        """Build a PC configuration using Smart Presets system.
 
-        This uses deterministic chain-of-constraints logic:
-        1. CPU selection by budget
-        2. Motherboard MUST match CPU socket
-        3. RAM MUST match motherboard type
-        4. GPU within remaining budget
-        5. PSU with sufficient wattage
-        6. Safety: ALL queries require stock > 0
+        NEW FLOW:
+        1. If no category_tag: Return preset options for user to choose
+        2. If category_tag provided: Build from selected preset
+        3. Fallback: Use legacy build_pc method if no presets available
+
+        Smart Presets automatically check stock and replace missing components.
         """
         from app.services.pc_assembly_engine import PCAssemblyEngine
 
         budget = params.get("budget")
         purpose = params.get("purpose", "gaming")
+        category_tag = params.get("category_tag")  # "Intel", "AMD", "Workstation"
 
         # Default budgets by purpose
         if not budget:
@@ -220,9 +220,51 @@ class ToolExecutor:
             budget = defaults.get(purpose, 450000)
 
         engine = PCAssemblyEngine(self.session)
-        build = await engine.build_pc(budget=budget, purpose=purpose)
 
-        # Convert to response format
+        # Step 1: If category_tag is provided, build from preset
+        if category_tag:
+            logger.info(f"[BUILD] Building from preset: {category_tag} @ {budget:,}₸")
+            build = await engine.build_from_preset(
+                category_tag=category_tag,
+                budget=budget,
+            )
+
+            if build.success:
+                build_data = build.to_dict()
+                await self._update_context(session_id, {
+                    "current_build": build_data,
+                    "original_budget": budget,
+                    "build_purpose": purpose,
+                    "selected_category": category_tag,
+                })
+                logger.info(f"[BUILD] Preset build completed: total={build.total_price()}")
+                return build_data
+
+            # Preset failed, fallback to legacy
+            logger.warning(f"[BUILD] Preset build failed, using legacy method")
+
+        # Step 2: Check if we should show preset options first
+        preset_options = await engine.get_preset_options(budget)
+
+        if preset_options.get("total_presets", 0) > 0:
+            # Save budget and return options for user to choose
+            await self._update_context(session_id, {
+                "pending_build_budget": budget,
+                "pending_build_purpose": purpose,
+                "preset_options": preset_options,
+            })
+
+            return {
+                "type": "preset_selection",
+                "budget": budget,
+                "purpose": purpose,
+                "options": preset_options,
+                "message": preset_options.get("message", "Выберите платформу: Intel, AMD или решение для работы?"),
+            }
+
+        # Step 3: Fallback to legacy build if no presets available
+        logger.info(f"[BUILD] No presets found, using legacy method for {budget:,}₸")
+        build = await engine.build_pc(budget=budget, purpose=purpose)
         build_data = build.to_dict()
 
         await self._update_context(session_id, {
@@ -231,8 +273,7 @@ class ToolExecutor:
             "build_purpose": purpose,
         })
 
-        logger.info(f"[BUILD] Completed: total={build.total_price()}, success={build.success}")
-
+        logger.info(f"[BUILD] Legacy build completed: total={build.total_price()}, success={build.success}")
         return build_data
 
     async def _tool_modify_build(self, params: dict, session_id: str) -> dict:

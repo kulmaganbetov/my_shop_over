@@ -363,6 +363,9 @@ class Orchestrator:
 
         # Use deterministic formatting for structured data
         if tool_name in ["build_pc", "modify_build"]:
+            # Check if this is a preset selection response
+            if data.get("type") == "preset_selection":
+                return self._format_preset_options(data)
             return self._format_pc_build(data)
 
         if tool_name == "get_alternatives":
@@ -390,6 +393,29 @@ class Orchestrator:
             return await self._generate_general_response(user_message, chat_history, context)
 
         return "Готово! Чем ещё могу помочь?"
+
+    def _format_preset_options(self, data: dict) -> str:
+        """Format preset options for user selection."""
+        budget = data.get("budget", 500000)
+        options = data.get("options", {})
+        message = options.get("message", "")
+
+        if message:
+            return message
+
+        # Fallback formatting
+        counts = options.get("counts", {})
+        total = options.get("total_presets", 0)
+
+        lines = [f"**Для бюджета {budget:,}₸ у меня есть {total} проверенных конфигураций:**\n"]
+
+        for category, count in counts.items():
+            emoji = "🔵" if "Intel" in category else "🔴" if "AMD" in category else "💼"
+            lines.append(f"{emoji} **{category}**: {count} вариант{'а' if 2 <= count <= 4 else 'ов'}")
+
+        lines.append("\n**Что выберем: Intel, AMD или решение для работы?**")
+
+        return "\n".join(lines)
 
     def _format_pc_build(self, data: dict) -> str:
         """Format PC build response - DETERMINISTIC."""
