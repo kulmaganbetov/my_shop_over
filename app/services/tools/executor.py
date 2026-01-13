@@ -221,7 +221,7 @@ class ToolExecutor:
 
         engine = PCAssemblyEngine(self.session)
 
-        # Step 1: If category_tag is provided, build from preset
+        # Step 1: If category_tag is provided, build from preset OR use legacy
         if category_tag:
             logger.info(f"[BUILD] Building from preset: {category_tag} @ {budget:,}₸")
             build = await engine.build_from_preset(
@@ -240,8 +240,20 @@ class ToolExecutor:
                 logger.info(f"[BUILD] Preset build completed: total={build.total_price()}")
                 return build_data
 
-            # Preset failed, fallback to legacy
-            logger.warning(f"[BUILD] Preset build failed, using legacy method")
+            # Preset failed - use LEGACY build instead of showing options again!
+            logger.warning(f"[BUILD] Preset build failed: {build.error_message}, using legacy method")
+            build = await engine.build_pc(budget=budget, purpose=purpose)
+            build_data = build.to_dict()
+
+            await self._update_context(session_id, {
+                "current_build": build_data,
+                "original_budget": budget,
+                "build_purpose": purpose,
+                "selected_category": category_tag,
+            })
+
+            logger.info(f"[BUILD] Legacy fallback completed: total={build.total_price()}, success={build.success}")
+            return build_data
 
         # Step 2: Check if we should show preset options first
         preset_options = await engine.get_preset_options(budget)
@@ -262,7 +274,7 @@ class ToolExecutor:
                 "message": preset_options.get("message", "Выберите платформу: Intel, AMD или решение для работы?"),
             }
 
-        # Step 3: Fallback to legacy build if no presets available
+        # Step 3: No presets - use legacy build directly
         logger.info(f"[BUILD] No presets found, using legacy method for {budget:,}₸")
         build = await engine.build_pc(budget=budget, purpose=purpose)
         build_data = build.to_dict()
